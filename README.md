@@ -16,6 +16,13 @@ This project allows you to:
 - 🐍 **snake** (key: 3)
 - 🐏 **ram** (key: 4)
 - 🐦 **bird** (key: 5)
+- 🐲 **dragon** (key: 6)
+- 🐕 **dog** (key: 7)
+- 🐀 **rat** (key: 8)
+- 🐎 **horse** (key: 9)
+- 🐵 **monkey** (key: 0)
+- 🐂 **ox** (key: -)
+- 🐇 **hare** (key: =)
 
 ---
 
@@ -25,6 +32,9 @@ This project allows you to:
 naruto_handsigns_yolo/
 ├── src/
 │   ├── capture_dataset.py   # Webcam capture script
+│   ├── manual_labeler.py    # Native labeling tool (OpenCV based)
+│   ├── process_dataset.py   # Auto-labeling & dataset splitting
+│   ├── check_labels.py      # Label verification tool
 │   ├── train.py             # YOLO training script
 │   ├── detect_webcam.py     # Real-time detection script
 │   └── utils/
@@ -33,8 +43,8 @@ naruto_handsigns_yolo/
 ├── dataset/
 │   ├── images/
 │   │   ├── raw/             # Initial captures (organized by class)
-│   │   ├── train/           # Training images (after labeling)
-│   │   └── val/             # Validation images (after labeling)
+│   │   ├── train/           # Training images (processed)
+│   │   └── val/             # Validation images (processed)
 │   └── labels/
 │       ├── train/           # Training labels (.txt files)
 │       └── val/             # Validation labels (.txt files)
@@ -92,11 +102,18 @@ python3 src/capture_dataset.py
 ```
 
 **Controls:**
-- Press `1` to capture a "tiger" image
-- Press `2` to capture a "boar" image
-- Press `3` to capture a "snake" image
-- Press `4` to capture a "ram" image
-- Press `5` to capture a "bird" image
+- Press `1` to capture "tiger"
+- Press `2` to capture "boar"
+- Press `3` to capture "snake"
+- Press `4` to capture "ram"
+- Press `5` to capture "bird"
+- Press `6` to capture "dragon"
+- Press `7` to capture "dog"
+- Press `8` to capture "rat"
+- Press `9` to capture "horse"
+- Press `0` to capture "monkey"
+- Press `-` to capture "ox"
+- Press `=` to capture "hare"
 - Press `q` to quit
 
 **Tips for good dataset:**
@@ -108,24 +125,41 @@ python3 src/capture_dataset.py
 
 Images are saved to `dataset/images/raw/<class_name>/`
 
-### 4. Label Your Images
+### 4. Label & Process Dataset
 
-After capturing, you need to label your images with bounding boxes. We recommend using one of these tools:
+This project includes built-in tools to label and prepare your data, so you don't need external software.
 
-1. **[Roboflow](https://roboflow.com/)** (free tier available) - Web-based, easy to use
-2. **[LabelImg](https://github.com/heartexlabs/labelImg)** - Desktop app
-3. **[CVAT](https://cvat.ai/)** - Web-based, feature-rich
+#### Step A: Label Images (Manual)
+Use the included manual labeler to draw bounding boxes around the hand signs.
 
-**Steps:**
-1. Upload your images from `dataset/images/raw/` to the labeling tool
-2. Draw bounding boxes around hands making each sign
-3. Label each box with the class name (tiger, boar, snake, ram, bird)
-4. Export in **YOLO format**
-5. Place the exported files:
-   - Images → `dataset/images/train/` and `dataset/images/val/`
-   - Labels (.txt) → `dataset/labels/train/` and `dataset/labels/val/`
+```bash
+python src/manual_labeler.py
+```
 
-**Recommended split:** 80% training, 20% validation
+**Controls:**
+- **Mouse Drag**: Draw a box around the hand.
+- **Space**: Save label and go to next image.
+- **X**: Trash image (delete poor quality captures).
+- **R**: Reset current box.
+- **Q**: Quit.
+
+#### Step B: Process & Split (Auto)
+Run the processing script to organize your raw data into Training and Validation sets.
+
+```bash
+python src/process_dataset.py
+```
+
+*Feature:* This script attempts to **auto-label** images using skin-tone detection if you skipped manual labeling for some images. It handles the 80/20 train-val split automatically.
+
+#### Step C: Verify Labels
+Before training, it's good practice to visually verify that your labels are correct.
+
+```bash
+python src/check_labels.py
+```
+
+This will generate sample images with boxes drawn on them in `dataset/debug_labels/`. Open that folder and check a few images to ensure accuracy.
 
 ### 5. Train the Model
 
@@ -229,6 +263,27 @@ To change the hand sign classes:
 
 ---
 
-## 📄 License
+## � Fireball Jutsu Mode (Interactive)
+
+Train to become a master of the Fire Style! This mode guides you through the hand sign sequence and renders a fireball effect when you succeed.
+
+**Prerequisites:**
+```bash
+pip install -r requirements.txt
+```
+
+**Run the Trainer:**
+```bash
+python src/jutsu_trainer.py
+```
+
+**How it works:**
+1. **Sequence**: Follow the icons at the bottom (`Horse -> Snake -> Ram -> Monkey -> Boar -> Horse -> Tiger`).
+2. **Feedback**: Icons turn **grey** as you complete each step.
+3. **Jutsu**: Upon completion, open your mouth to release the Fireball!
+
+---
+
+## �📄 License
 
 This project is provided as-is for educational purposes.

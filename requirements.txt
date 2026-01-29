@@ -6,7 +6,8 @@ ultralytics>=8.0.0
 
 # Computer vision
 opencv-python>=4.8.0
-mediapipe>=0.10.0
+mediapipe==0.10.9
+cvzone>=1.5.0
 
 # Additional dependencies (usually installed with ultralytics)
 numpy>=1.23.0

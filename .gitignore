@@ -1,0 +1,17 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS Files
+.DS_Store
+
+# Large Model Files/Runs (Optional, uncomment if you want to exclude training results)
+# models/runs/
+
+# IDE
+.vscode/
