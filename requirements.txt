@@ -3,10 +3,11 @@
 
 # Core ML framework for YOLO
 ultralytics>=8.0.0
+pygame>=2.6.0  # Sound effects
 
 # Computer vision
 opencv-python>=4.8.0
-mediapipe==0.10.9
+mediapipe>=0.10.9
 cvzone>=1.5.0
 
 # Additional dependencies (usually installed with ultralytics)
