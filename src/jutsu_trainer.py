@@ -95,36 +95,94 @@ class FireballJutsuTrainer:
         self.fire_effect = FireEffect(fire_size=400)
         # self.fire_img = cv2.imread(str(self.pics_dir / "fire.png"), cv2.IMREAD_UNCHANGED)
         
-        # Define Available Jutsu Sequences
-        # Each jutsu has: sequence, effect type, and signature sound file
-        self.jutsu_list = {
-            "Fireball": {
-                "sequence": ["horse", "snake", "ram", "monkey", "boar", "horse", "tiger"],
-                "effect": "fire",
-                "sound": "fireball.mp3"  # src/sounds/fireball.mp3
-            },
-            "Chidori": {
-                "sequence": ["ox", "hare", "monkey"],
-                "effect": "lightning",
-                "sound": "chidori.mp3"
-            },
-            "Water Dragon": {
-                "sequence": ["ox", "monkey", "hare", "rat", "boar", "bird", "ox", "horse", "bird"],
-                "effect": "water",
-                "sound": "water_dragon.mp3"
-            },
-            "Shadow Clone": {
-                "sequence": ["ram", "snake", "tiger"],
-                "effect": "clone",
-                "sound": "shadow_clone.mp3"
-            },
-            "Phoenix Flower": {
-                "sequence": ["rat", "tiger", "dog", "ox", "hare", "tiger"],
-                "effect": "fire",
-                "sound": "phoenix_flower.mp3"
-            }
+        # Load Chidori Video Effect
+        self.chidori_video = None
+        chidori_video_path = Path(__file__).parent / "chidori" / "chidori.mp4"
+        if chidori_video_path.exists():
+            self.chidori_video = cv2.VideoCapture(str(chidori_video_path))
+            print("[+] Loaded Chidori video effect")
+        else:
+            print(f"[!] Chidori video not found at {chidori_video_path}")
+        
+        # Load Jutsu from recipe.txt
+        self.jutsu_list = self._load_jutsu_recipes()
+        self._init_continued()  # Continue with rest of initialization
+    
+    def _load_jutsu_recipes(self):
+        """Load jutsu definitions from recipe.txt"""
+        recipe_path = Path(__file__).parent / "recipe.txt"
+        jutsu_list = {}
+        
+        # Effect type mapping based on jutsu name keywords
+        effect_map = {
+            "fireball": "fire",
+            "phoenix": "fire",
+            "chidori": "lightning",
+            "water": "water",
+            "dragon": "water",
+            "clone": "clone",
+            "shadow": "clone"
         }
         
+        try:
+            with open(recipe_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    parts = line.split(',', 2)  # Split name, then rest
+                    if len(parts) < 2:
+                        continue
+                    
+                    name = parts[0].strip()
+                    
+                    # Parse sequence from [sign1,sign2,...]
+                    rest = ','.join(parts[1:])
+                    seq_start = rest.find('[')
+                    seq_end = rest.find(']')
+                    if seq_start == -1 or seq_end == -1:
+                        continue
+                    
+                    sequence_str = rest[seq_start+1:seq_end]
+                    sequence = [s.strip() for s in sequence_str.split(',')]
+                    
+                    # Parse remaining fields after sequence
+                    remaining = rest[seq_end+1:].lstrip(',').split(',')
+                    
+                    display_text = remaining[0].strip() if len(remaining) > 0 else ""
+                    sound_path = remaining[1].strip() if len(remaining) > 1 else "none"
+                    video_path = remaining[2].strip() if len(remaining) > 2 else "none"
+                    
+                    # Determine effect type
+                    effect = "fire"  # default
+                    name_lower = name.lower()
+                    for keyword, eff_type in effect_map.items():
+                        if keyword in name_lower:
+                            effect = eff_type
+                            break
+                    
+                    # Extract just filename for sound (for backward compatibility)
+                    sound_file = Path(sound_path).name if sound_path != "none" else ""
+                    
+                    jutsu_list[name] = {
+                        "sequence": sequence,
+                        "effect": effect,
+                        "sound": sound_file,
+                        "display_text": display_text if display_text != "none" else "",
+                        "sound_path": sound_path if sound_path != "none" else "",
+                        "video_path": video_path if video_path != "none" else ""
+                    }
+                    print(f"[+] Loaded jutsu: {name} ({len(sequence)} signs)")
+                    
+        except Exception as e:
+            print(f"[!] Error loading recipe.txt: {e}")
+            # Fallback to empty dict
+            
+        return jutsu_list
+    
+    def _init_continued(self):
+        """Continue initialization after loading jutsu recipes"""
         # Current jutsu selection
         self.jutsu_names = list(self.jutsu_list.keys())
         self.current_jutsu_idx = 0
@@ -175,7 +233,8 @@ class FireballJutsuTrainer:
         
         # Initialize Sound
         pygame.mixer.init()
-        self.sounds_dir = Path("src/sounds")
+        self.sounds_dir = Path(__file__).parent / "sounds"
+        self.chidori_dir = Path(__file__).parent / "chidori"  # Chidori assets in separate folder
         self.sound_each = None
         self.sound_complete = None  # Default completion sound (fallback)
         self.jutsu_sounds = {}  # Per-jutsu signature sounds
@@ -193,10 +252,16 @@ class FireballJutsuTrainer:
             # Load per-jutsu signature sounds
             for jutsu_name, jutsu_data in self.jutsu_list.items():
                 sound_file = jutsu_data.get("sound", "")
+                # Check sounds folder first, then chidori folder
                 sound_path = self.sounds_dir / sound_file
+                if not sound_path.exists():
+                    # Try chidori folder for chidori.mp3
+                    sound_path = self.chidori_dir / Path(sound_file).name
                 if sound_path.exists():
                     self.jutsu_sounds[jutsu_name] = pygame.mixer.Sound(str(sound_path))
-                    print(f"[+] Loaded signature sound: {sound_file}")
+                    print(f"[+] Loaded signature sound: {sound_path.name}")
+                else:
+                    print(f"[!] Sound not found: {sound_file}")
             
             print("[+] Sound effects loaded")
         except Exception as e:
@@ -373,11 +438,7 @@ class FireballJutsuTrainer:
                     highest_conf = conf
                     detected_class = current_class
         
-        # Fallback: If YOLO didn't find a hand (sign), use MediaPipe Hands
-        if self.last_hand_center is None:
-            mp_center = self.detect_hands_mediapipe(frame)
-            if mp_center:
-                self.last_hand_center = mp_center
+        # No MediaPipe fallback during sign detection - keep modes separate
         
         # Draw detection region if enabled
         if self.show_detection_region:
@@ -431,7 +492,15 @@ class FireballJutsuTrainer:
         
         # Instructions text
         if self.jutsu_active:
-            cv2.putText(panel, "KATON: GOUKAKYUU NO JUTSU!", (w//2 - 220, 25), 
+            current_jutsu = self.jutsu_names[self.current_jutsu_idx]
+            display_text = self.jutsu_list[current_jutsu].get("display_text", current_jutsu.upper())
+            if not display_text:
+                display_text = current_jutsu.upper()
+                
+            # Center the text dynamically
+            text_size = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+            text_x = (w - text_size[0]) // 2
+            cv2.putText(panel, display_text, (text_x, 25), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
         else:
             target = self.sequence[self.current_step]
@@ -529,17 +598,24 @@ class FireballJutsuTrainer:
                 face_found = True
 
         # Render Dynamic Effects if active
-        if face_found and self.jutsu_active and self.show_effects:
+        if self.jutsu_active and self.show_effects:
             current_jutsu = self.jutsu_names[self.current_jutsu_idx]
             effect_type = self.jutsu_list[current_jutsu]["effect"]
             
             # Determine effect position
-            # Default to mouth (face) position
+            # Default to mouth (face) position if available
             effect_x, effect_y = cx, cy
             
-            # For hand-based jutsu, use hand position if available
-            if effect_type in ["lightning", "water"] and self.last_hand_center:
-                effect_x, effect_y = self.last_hand_center
+            # For hand-based jutsu, use hand position (don't require face)
+            if effect_type in ["lightning", "water"]:
+                if self.last_hand_center:
+                    effect_x, effect_y = self.last_hand_center
+                elif not face_found:
+                    # No hand and no face - skip rendering this frame
+                    return frame
+            elif not face_found:
+                # Fire/clone need face - skip if no face
+                return frame
             
             if effect_type == "fire":
                 # Fireball always comes from mouth (face cx, cy)
@@ -558,9 +634,68 @@ class FireballJutsuTrainer:
                     pass
                     
             elif effect_type == "lightning":
-                # Render Lightning on hand (or face if hand missing)
-                cv2.circle(frame, (effect_x, effect_y), 80, (255, 255, 0), 3)
-                cv2.putText(frame, "CHIDORI!", (effect_x-70, effect_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                # Render Chidori Video Effect with additive blending (black bg removal)
+                if self.chidori_video is not None:
+                    ret_vid, vid_frame = self.chidori_video.read()
+                    if not ret_vid:
+                        # Loop the video
+                        self.chidori_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret_vid, vid_frame = self.chidori_video.read()
+                    
+                    if ret_vid and vid_frame is not None:
+                        # Scale down the effect (0.5 = 50% of original size)
+                        scale = 0.5
+                        vid_frame = cv2.resize(vid_frame, None, fx=scale, fy=scale)
+                        effect_h, effect_w = vid_frame.shape[:2]
+                        
+                        # Calculate position (centered on hand)
+                        x1 = effect_x - effect_w // 2
+                        y1 = effect_y - effect_h // 2
+                        x2, y2 = x1 + effect_w, y1 + effect_h
+                        
+                        # Get frame dimensions
+                        fh, fw = frame.shape[:2]
+                        
+                        # Clamp to frame bounds
+                        src_x1 = max(0, -x1)
+                        src_y1 = max(0, -y1)
+                        src_x2 = effect_w - max(0, x2 - fw)
+                        src_y2 = effect_h - max(0, y2 - fh)
+                        
+                        dst_x1 = max(0, x1)
+                        dst_y1 = max(0, y1)
+                        dst_x2 = min(fw, x2)
+                        dst_y2 = min(fh, y2)
+                        
+                        # Apply additive blending with edge feathering
+                        if dst_x2 > dst_x1 and dst_y2 > dst_y1:
+                            roi = frame[dst_y1:dst_y2, dst_x1:dst_x2]
+                            effect_crop = vid_frame[src_y1:src_y2, src_x1:src_x2]
+                            
+                            # Create radial gradient mask for edge feathering
+                            mask_h, mask_w = effect_crop.shape[:2]
+                            center_x, center_y = mask_w // 2, mask_h // 2
+                            Y, X = np.ogrid[:mask_h, :mask_w]
+                            # Elliptical distance normalized by half-width and half-height
+                            dist = np.sqrt(((X - center_x) / (mask_w / 2))**2 + ((Y - center_y) / (mask_h / 2))**2)
+                            # Feather starts at 60% radius, fades to 0 at edge
+                            alpha = np.clip(1.0 - (dist - 0.6) / 0.4, 0, 1)
+                            alpha = (alpha ** 1.5).astype(np.float32)  # Smooth falloff
+                            alpha_3ch = np.dstack([alpha, alpha, alpha])
+                            
+                            # Additive blend with feathered edges
+                            effect_float = effect_crop.astype(np.float32) * alpha_3ch
+                            blended = np.clip(roi.astype(np.float32) + effect_float, 0, 255).astype(np.uint8)
+                            frame[dst_y1:dst_y2, dst_x1:dst_x2] = blended
+                        
+                        # Apply blue screen tint for atmosphere
+                        blue_tint = np.zeros_like(frame, dtype=np.uint8)
+                        blue_tint[:, :] = (150, 80, 0)  # BGR - blue tint
+                        frame = cv2.addWeighted(frame, 0.85, blue_tint, 0.15, 0)
+                else:
+                    # Fallback: simple circle if video not available
+                    cv2.circle(frame, (effect_x, effect_y), 80, (255, 255, 0), 3)
+                    cv2.putText(frame, "CHIDORI!", (effect_x-70, effect_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
                 
             elif effect_type == "water":
                 # Render Water on hand (or face if hand missing)
