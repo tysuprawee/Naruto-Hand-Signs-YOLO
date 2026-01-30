@@ -42,8 +42,10 @@ naruto_handsigns_yolo/
 │   ├── train.py             # YOLO training script
 │   ├── detect_webcam.py     # Real-time detection script
 │   ├── jutsu_trainer.py     # Interactive Jutsu Trainer (main feature!)
+│   ├── recipe.txt           # Configurable Jutsu logic & sequences
 │   ├── pics/                # Hand sign icons for UI
 │   ├── sounds/              # Sound effects (jutsu sounds, feedback)
+│   ├── chidori/             # Chidori video and sound effect resources
 │   └── utils/
 │       ├── paths.py         # Centralized path handling
 │       ├── visualization.py # Drawing helpers
@@ -65,6 +67,13 @@ naruto_handsigns_yolo/
 ├── requirements.txt
 └── README.md
 ```
+
+### Example Training Results
+Here is an example of validation batch predictions showing the model confidently detecting hand signs.
+<img src="https://github.com/user-attachments/assets/875e8229-59b6-4af2-bef4-2477125515f0" width="800" alt="Training Validation Results"/>
+
+#### Training Metrics
+<img src="models/runs/handsigns_yolov8n_20260129_002620/results.png" width="800" alt="Training Metrics"/>
 
 ---
 
