@@ -288,7 +288,7 @@ To change the hand sign classes:
 
 ---
 
-## 🔥 Jutsu Trainer Mode (Interactive)
+## 🔥 Jutsu Trainer Mode (Interactive) (You can add your own jutsu!!!)
 
 Become a ninja master! This interactive mode uses **YOLO** for hand sign recognition and **MediaPipe** for advanced face/hand tracking to guide you through jutsu sequences with real-time visual and audio effects.
 
