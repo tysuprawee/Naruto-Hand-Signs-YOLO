@@ -75,6 +75,12 @@ Here is an example of validation batch predictions showing the model confidently
 #### Training Metrics
 <img src="models/runs/handsigns_yolov8n_20260129_002620/results.png" width="800" alt="Training Metrics"/>
 
+The charts above show the training progress:
+- **Box Loss**: How well the model finds the center of the hand (lower is better).
+- **Class Loss**: Accuracy of identifying correct hand signs (lower is better).
+- **mAP50**: Overall precision at 50% overlap (higher is better, >0.9 is excellent).
+- **mAP50-95**: Strict precision across multiple thresholds (higher is better).
+
 ---
 
 ## 🚀 Getting Started
