@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.paths import get_class_names, get_latest_weights
 from src.utils.visualization import draw_detection_box, create_class_color_map
+from src.utils.fire_effect import FireEffect
 
 class FireballJutsuTrainer:
     def __init__(self, model_path, camera_index=0):
@@ -48,7 +49,11 @@ class FireballJutsuTrainer:
         try:
             if Path(hand_model_path).exists():
                 base_options = python.BaseOptions(model_asset_path=hand_model_path)
-                options = vision.HandLandmarkerOptions(base_options=base_options, num_hands=1)
+                options = vision.HandLandmarkerOptions(
+                    base_options=base_options, 
+                    num_hands=1,
+                    running_mode=vision.RunningMode.VIDEO
+                )
                 self.hand_landmarker = vision.HandLandmarker.create_from_options(options)
                 print("[+] Hand tracking: MediaPipe")
         except Exception as e:
@@ -81,10 +86,14 @@ class FireballJutsuTrainer:
         self.fps_start_time = time.time()
         self.fps_frame_count = 0
         self.current_fps = 0
+        self.last_mp_timestamp = 0  # Support for MediaPipe VIDEO mode
+        self.prev_chidori_pos = None # For temporal smoothing of Chidori effect
         
         # Load Assets
         self.pics_dir = Path("src/pics")
-        self.fire_img = cv2.imread(str(self.pics_dir / "fire.png"), cv2.IMREAD_UNCHANGED)
+        # Initialize Procedural Fire Effect
+        self.fire_effect = FireEffect(fire_size=400)
+        # self.fire_img = cv2.imread(str(self.pics_dir / "fire.png"), cv2.IMREAD_UNCHANGED)
         
         # Define Available Jutsu Sequences
         # Each jutsu has: sequence, effect type, and signature sound file
@@ -231,21 +240,66 @@ class FireballJutsuTrainer:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
             
-            # Detect
-            detection_result = self.hand_landmarker.detect(mp_image)
+            # Detect (VIDEO mode for speed/tracking)
+            timestamp_ms = int(time.time() * 1000)
+            if timestamp_ms <= self.last_mp_timestamp:
+                timestamp_ms = self.last_mp_timestamp + 1
+            self.last_mp_timestamp = timestamp_ms
+
+            detection_result = self.hand_landmarker.detect_for_video(mp_image, timestamp_ms)
             
             if detection_result.hand_landmarks:
                 # print(f"MP detected hand (Confidence: {detection_result.handedness[0][0].score:.2f})")
                 # Get the first hand
                 hand_landmarks = detection_result.hand_landmarks[0]
-                
-                # Use Wrist (0) and Middle Finger MCP (9) average for center
                 wrist = hand_landmarks[0]
-                middle_mcp = hand_landmarks[9]
+                
+                # 1. Base Position (Centroid of Wrist + All Knuckles)
+                indices = [0, 5, 9, 13, 17]
+                base_x = sum(hand_landmarks[i].x for i in indices) / len(indices)
+                base_y = sum(hand_landmarks[i].y for i in indices) / len(indices)
+
+                # 2. Compute Palm Normal (Wrist -> Index, Wrist -> Pinky) using vector math
+                def to_vec(idx):
+                    lm = hand_landmarks[idx]
+                    return np.array([lm.x, lm.y, lm.z])
+                
+                v1 = to_vec(5) - to_vec(0)  # Wrist to Index
+                v2 = to_vec(17) - to_vec(0) # Wrist to Pinky
+                normal = np.cross(v1, v2)
+                mag = np.linalg.norm(normal)
+                if mag > 1e-6: normal /= mag # Normalize
+                
+                # 3. Apply Dynamic Offset based on Orientation
+                # The normal points "out" of the palm. We use its X/Y component to shift the effect.
+                # The normal points "out" or "in" depending on hand. Flipping direction for "forehand" feel.
+                # Right Hand (MP: Left): Needs -0.15. Left Hand (MP: Right): Needs +0.15.
+                offset_strength = 0.15
+                
+                # Check Handedness (Left vs Right) to flip offset
+                if detection_result.handedness:
+                    label = detection_result.handedness[0][0].category_name
+                    # If label is "Left" (Physical Right in mirror), use negative offset
+                    if label == "Left":
+                        offset_strength = -0.15
+
+                target_offset_x = normal[0] * offset_strength
+                target_offset_y = normal[1] * offset_strength
                 
                 h, w = frame.shape[:2]
-                cx = int((wrist.x + middle_mcp.x) / 2 * w)
-                cy = int((wrist.y + middle_mcp.y) / 2 * h)
+                target_x = (base_x + target_offset_x) * w
+                target_y = (base_y + target_offset_y) * h
+                
+                # 4. Temporal Smoothing (Lerp)
+                if self.prev_chidori_pos is None:
+                    self.prev_chidori_pos = (target_x, target_y)
+                
+                alpha = 0.2
+                smooth_x = self.prev_chidori_pos[0] * (1-alpha) + target_x * alpha
+                smooth_y = self.prev_chidori_pos[1] * (1-alpha) + target_y * alpha
+                self.prev_chidori_pos = (smooth_x, smooth_y)
+                
+                cx, cy = int(smooth_x), int(smooth_y)
                 
                 # Draw Hand Mesh if enabled
                 if self.show_hand_mesh:
@@ -489,11 +543,17 @@ class FireballJutsuTrainer:
             
             if effect_type == "fire":
                 # Fireball always comes from mouth (face cx, cy)
-                fire_w, fire_h = 250, 250
-                pos = [cx - fire_w//2, cy - fire_h//2 + 50] 
+                # Update and Render Procedural Fire
+                self.fire_effect.update()
+                fire_rgba = self.fire_effect.render()
+                
+                # Center fire at mouth
+                fw, fh = self.fire_effect.fire_size, self.fire_effect.fire_size
+                # Offset slightly up so it comes from mouth, not centered on it
+                pos = [cx - fw//2, cy - fh//2] 
+                
                 try:
-                    fire_resized = cv2.resize(self.fire_img, (fire_w, fire_h), interpolation=cv2.INTER_CUBIC)
-                    frame = cvzone.overlayPNG(frame, fire_resized, pos)
+                    frame = cvzone.overlayPNG(frame, fire_rgba, pos)
                 except Exception:
                     pass
                     
@@ -747,6 +807,11 @@ class FireballJutsuTrainer:
                             self.current_step = 0 
                             self.play_sound("complete")  # Play default completion sound
                             self.signature_sound_played = False # Flag to play signature sound later
+            else:
+                # Jutsu Active: Track hand for effect positioning (using fast MediaPipe)
+                mp_center = self.detect_hands_mediapipe(frame)
+                if mp_center:
+                    self.last_hand_center = mp_center
             
             # 2. Face Mesh & Fire Effect (runs always for mesh, fire only when active)
             frame = self.render_effect(frame)
@@ -798,6 +863,7 @@ class FireballJutsuTrainer:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--weights", default=None, help="Path to best.pt")
+    parser.add_argument("--camera", type=int, default=0, help="Camera index (default: 0)")
     args = parser.parse_args()
     
     # Auto-find weights if not provided
@@ -809,5 +875,5 @@ if __name__ == "__main__":
         print("[-] No weights found. Please train model first.")
         sys.exit(1)
         
-    trainer = FireballJutsuTrainer(weights)
+    trainer = FireballJutsuTrainer(weights, camera_index=args.camera)
     trainer.run()

@@ -37,9 +37,13 @@ naruto_handsigns_yolo/
 │   ├── check_labels.py      # Label verification tool
 │   ├── train.py             # YOLO training script
 │   ├── detect_webcam.py     # Real-time detection script
+│   ├── jutsu_trainer.py     # Interactive Jutsu Trainer (main feature!)
+│   ├── pics/                # Hand sign icons for UI
+│   ├── sounds/              # Sound effects (jutsu sounds, feedback)
 │   └── utils/
 │       ├── paths.py         # Centralized path handling
-│       └── visualization.py # Drawing helpers
+│       ├── visualization.py # Drawing helpers
+│       └── fire_effect.py   # Procedural fire effect rendering
 ├── dataset/
 │   ├── images/
 │   │   ├── raw/             # Initial captures (organized by class)
@@ -51,7 +55,9 @@ naruto_handsigns_yolo/
 ├── yolo_config/
 │   └── data.yaml            # YOLO dataset configuration
 ├── models/
-│   └── runs/                # Training results and weights
+│   ├── runs/                # Training results and weights
+│   ├── face_landmarker.task # MediaPipe face model (optional)
+│   └── hand_landmarker.task # MediaPipe hand model (optional)
 ├── requirements.txt
 └── README.md
 ```
@@ -263,27 +269,73 @@ To change the hand sign classes:
 
 ---
 
-## � Fireball Jutsu Mode (Interactive)
+## 🔥 Jutsu Trainer Mode (Interactive)
 
-Train to become a master of the Fire Style! This mode guides you through the hand sign sequence and renders a fireball effect when you succeed.
+Become a ninja master! This interactive mode uses **YOLO** for hand sign recognition and **MediaPipe** for advanced face/hand tracking to guide you through jutsu sequences with real-time visual and audio effects.
 
-**Prerequisites:**
+### Available Jutsu
+
+| Jutsu | Effect | Hand Sign Sequence |
+|-------|--------|-------------------|
+| 🔥 **Fireball** | Fire from mouth | Horse → Snake → Ram → Monkey → Boar → Horse → Tiger |
+| ⚡ **Chidori** | Lightning on hand | Ox → Hare → Monkey |
+| 🌊 **Water Dragon** | Water effect | Ox → Monkey → Hare → Rat → Boar → Bird → Ox → Horse → Bird |
+| 👥 **Shadow Clone** | Clone text | Ram → Snake → Tiger |
+| 🔥 **Phoenix Flower** | Fire effect | Rat → Tiger → Dog → Ox → Hare → Tiger |
+
+### Quick Start
 ```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-**Run the Trainer:**
-```bash
+# Download MediaPipe models (optional, for advanced tracking)
+# Place face_landmarker.task and hand_landmarker.task in models/
+
+# Run the Trainer
 python src/jutsu_trainer.py
 ```
 
-**How it works:**
-1. **Sequence**: Follow the icons at the bottom (`Horse -> Snake -> Ram -> Monkey -> Boar -> Horse -> Tiger`).
-2. **Feedback**: Icons turn **grey** as you complete each step.
-3. **Jutsu**: Upon completion, open your mouth to release the Fireball!
+### Controls
+
+| Key/Action | Function |
+|------------|----------|
+| **Settings Button** | Click top-right to open settings menu |
+| **Q** | Quit the trainer |
+
+### Settings Menu
+
+The in-app settings menu provides:
+
+**Toggle Options:**
+- **Boxes**: Show/hide YOLO detection bounding boxes
+- **Face Mesh**: Show/hide MediaPipe face landmark wireframe
+- **Hand Mesh**: Show/hide MediaPipe hand landmark wireframe
+- **Detect Zone**: Show/hide detection region overlay
+- **Effects**: Enable/disable visual jutsu effects
+
+**Volume Sliders:**
+- **Master**: Overall volume control
+- **Each**: Sound for each correct hand sign
+- **Done**: Completion sound
+- **Sign**: Signature jutsu sound (fireball, chidori, etc.)
+
+**Jutsu Selection:**
+- Use `<` and `>` arrows to switch between available jutsu
+- **Reset**: Reset current sequence progress
+- **Exit**: Close the application
+
+### How It Works
+1. **Perform Signs**: Match the highlighted hand sign shown in the icon bar
+2. **Feedback**: Icons turn **grey** as you complete each step, with audio cue
+3. **Completion**: When all signs are done, the jutsu effect triggers!
+   - **Fireball/Phoenix**: Procedural fire renders from your mouth
+   - **Chidori**: Lightning effect appears on your hand
+   - **Water Dragon**: Water effect on hand
+   - **Shadow Clone**: Clone effect around face
 
 ---
 
-## �📄 License
+## 📄 License
 
 This project is provided as-is for educational purposes.
+
