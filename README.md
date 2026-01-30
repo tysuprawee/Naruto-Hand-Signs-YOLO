@@ -9,6 +9,7 @@ This project allows you to:
 2. **Label** images externally (e.g., with Roboflow)
 3. **Train** a YOLO model on your custom dataset
 4. **Detect** hand signs in real-time with bounding boxes and labels
+<img width="1920" height="1920" alt="image" src="https://github.com/user-attachments/assets/875e8229-59b6-4af2-bef4-2477125515f0" />
 
 ### Supported Hand Signs (Classes)
 - 🐯 **tiger** (key: 1)
