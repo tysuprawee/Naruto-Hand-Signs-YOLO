@@ -252,6 +252,9 @@ class FireballJutsuTrainer:
             # Load per-jutsu signature sounds
             for jutsu_name, jutsu_data in self.jutsu_list.items():
                 sound_file = jutsu_data.get("sound", "")
+                if not sound_file:
+                    continue
+
                 # Check sounds folder first, then chidori folder
                 sound_path = self.sounds_dir / sound_file
                 if not sound_path.exists():
