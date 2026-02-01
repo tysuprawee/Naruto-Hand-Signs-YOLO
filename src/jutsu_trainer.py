@@ -97,7 +97,7 @@ class FireballJutsuTrainer:
         # Load Assets
         self.pics_dir = Path("src/pics")
         # Initialize Procedural Fire Effect
-        self.fire_effect = FireEffect(fire_size=400)
+        self.fire_effect = FireEffect(fire_size=600)
         # self.fire_img = cv2.imread(str(self.pics_dir / "fire.png"), cv2.IMREAD_UNCHANGED)
         
         # Load Chidori Video Effect
@@ -678,6 +678,7 @@ class FireballJutsuTrainer:
 
     def render_effect(self, frame):
         face_found = False
+        face_landmarks = None
         cx, cy = 0, 0
         
         if self.face_landmarker:
@@ -687,6 +688,7 @@ class FireballJutsuTrainer:
             detection_result = self.face_landmarker.detect(mp_image)
             if detection_result.face_landmarks:
                 face = detection_result.face_landmarks[0]
+                face_landmarks = face
                 h, w, c = frame.shape
                 
                 # Draw face mesh if enabled
@@ -786,14 +788,34 @@ class FireballJutsuTrainer:
             
             if effect_type == "fire":
                 # Fireball always comes from mouth (face cx, cy)
+                # Calculate Wind based on Head Yaw
+                wind_x = 0
+                if face_landmarks:
+                    try:
+                        # Index 1: Nose Tip
+                        # Index 234: Left side of face (Screen relative: actually right cheek)
+                        # Index 454: Right side of face (Screen relative: actually left cheek)
+                        nose_x = face_landmarks[1].x
+                        l_x = face_landmarks[234].x
+                        r_x = face_landmarks[454].x
+                        
+                        width = r_x - l_x
+                        if width > 0:
+                            rel_nose = (nose_x - l_x) / width
+                            # Center is 0.5. Range roughly 0.2 to 0.8
+                            # Deflection force
+                            wind_x = (rel_nose - 0.5) * 1000 # Adjust sensitivity
+                    except:
+                        pass
+
                 # Update and Render Procedural Fire
-                self.fire_effect.update()
+                self.fire_effect.update(wind_x=wind_x)
                 fire_rgba = self.fire_effect.render()
                 
                 # Center fire at mouth
                 fw, fh = self.fire_effect.fire_size, self.fire_effect.fire_size
                 # Offset slightly up so it comes from mouth, not centered on it
-                pos = [cx - fw//2, cy - fh//2] 
+                pos = [cx - fw//2, cy - fh//2 - 40] 
                 
                 try:
                     frame = cvzone.overlayPNG(frame, fire_rgba, pos)
