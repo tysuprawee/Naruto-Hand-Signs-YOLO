@@ -37,7 +37,12 @@ class FireballJutsuTrainer:
         try:
             if Path(model_path_mp).exists():
                 base_options = python.BaseOptions(model_asset_path=model_path_mp)
-                options = vision.FaceLandmarkerOptions(base_options=base_options, num_faces=1)
+                options = vision.FaceLandmarkerOptions(
+                    base_options=base_options, 
+                    output_face_blendshapes=True,
+                    output_facial_transformation_matrixes=True,
+                    num_faces=1
+                )
                 self.face_landmarker = vision.FaceLandmarker.create_from_options(options)
                 print("[+] Face detection: MediaPipe")
         except Exception:
@@ -103,6 +108,61 @@ class FireballJutsuTrainer:
             print("[+] Loaded Chidori video effect")
         else:
             print(f"[!] Chidori video not found at {chidori_video_path}")
+
+        # Load Rasengan Video Effect
+        self.rasengan_video = None
+        rasen_video_path = Path(__file__).parent / "RasenShuriken" / "RasenShuriken.mp4"
+        if rasen_video_path.exists():
+            self.rasengan_video = cv2.VideoCapture(str(rasen_video_path))
+            print("[+] Loaded Rasengan video effect")
+        else:
+            print(f"[!] Rasengan video not found at {rasen_video_path}")
+
+
+            
+        # Load Sharingan Texture
+        self.sharingan_img = None
+        # Prioritize PNG as per user request (already transparent)
+        png_path = Path("src/sharingan/sharingan.png")
+        jpg_path = Path("src/sharingan/sharingan.jpg")
+        
+        if png_path.exists():
+            # Load optimized PNG directly
+            img = cv2.imread(str(png_path), cv2.IMREAD_UNCHANGED)
+            if img is not None:
+                self.sharingan_img = img
+                print(f"[+] Loaded Sharingan texture from {png_path.name}")
+        
+        elif jpg_path.exists():
+            # Fallback to JPG with auto-processing
+            img = cv2.imread(str(jpg_path), cv2.IMREAD_UNCHANGED)
+            if img is not None:
+                # If no alpha channel (RGB), create one
+                if img.shape[2] == 3:
+                    b, g, r = cv2.split(img)
+                    alpha = np.ones(b.shape, dtype=b.dtype) * 255
+                    img = cv2.merge([b, g, r, alpha])
+
+                # Apply Circular Mask
+                h, w = img.shape[:2]
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.circle(mask, (w//2, h//2), min(w, h)//2, 255, -1)
+                
+                # Apply mask to alpha channel
+                b, g, r, a = cv2.split(img)
+                a = cv2.bitwise_and(a, mask)
+                
+                # Strip black background
+                gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+                _, black_mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
+                a = cv2.bitwise_and(a, black_mask)
+                
+                self.sharingan_img = cv2.merge([b, g, r, a])
+                print(f"[+] Loaded Sharingan texture from {jpg_path.name} (Auto-processed)")
+                
+                
+        if self.sharingan_img is None:
+            print(f"[!] Sharingan texture not found in src/sharingan/")
         
         # Load Jutsu from recipe.txt
         self.jutsu_list = self._load_jutsu_recipes()
@@ -120,8 +180,14 @@ class FireballJutsuTrainer:
             "chidori": "lightning",
             "water": "water",
             "dragon": "water",
+            "shuriken": "rasen", # support old name if needed
+            "rasengan": "rasengan",
             "clone": "clone",
-            "shadow": "clone"
+            "dragon": "water",
+            "clone": "clone",
+            "shadow": "clone",
+            "sharingan": "eye",
+            "eye": "eye"
         }
         
         try:
@@ -224,6 +290,7 @@ class FireballJutsuTrainer:
         self.show_detection_region = False  # Detection zone overlay
         self.show_effects = True        # Effects: Fire and future effects (default ON)
         self.show_hand_mesh = True     # Hand Mesh: Shows hand landmarks (default ON)
+        self.show_sharingan_always = False # Sharingan: Always show sharingan eyes toggle
         
         # Advanced Volume Controls
         self.vol_master = 0.7
@@ -512,6 +579,103 @@ class FireballJutsuTrainer:
 
         return panel
 
+    def _apply_eye_effect(self, frame, face_landmarks, eye_indices, side="left"):
+        """Helper to render Sharingan with natural blending (feathering + glint + eyelid masking)."""
+        h, w, _ = frame.shape
+        
+        center_idx, edge_idx = eye_indices
+        center = face_landmarks[center_idx]
+        edge = face_landmarks[edge_idx]
+        
+        cx, cy = int(center.x * w), int(center.y * h)
+        ex, ey = int(edge.x * w), int(edge.y * h)
+        
+        # Calculate radius & diameter
+        radius = int(math.hypot(ex - cx, ey - cy) * 1.15) # Slightly larger to ensure coverage
+        if radius <= 0: return frame
+        
+        diameter = radius * 2
+        
+        # Resize Sharingan
+        eye_overlay = cv2.resize(self.sharingan_img, (diameter, diameter))
+        
+        # 1. Edge Feathering (Radial Gradient)
+        Y, X = np.ogrid[:diameter, :diameter]
+        center_mask = (diameter - 1) / 2
+        dist = np.sqrt((X - center_mask)**2 + (Y - center_mask)**2)
+        
+        max_dist = diameter / 2
+        feather_start = max_dist * 0.75 # Start feathering earlier
+        feather_width = max_dist * 0.25
+        
+        alpha_mask = np.clip(1.0 - (dist - feather_start) / feather_width, 0, 1)
+        
+        # Apply feather mask
+        b, g, r, a = cv2.split(eye_overlay)
+        a = (a.astype(np.float32) * alpha_mask).astype(np.uint8)
+        
+        # Calculate ROI bounds
+        x1, y1 = cx - radius, cy - radius
+        x2, y2 = x1 + diameter, y1 + diameter
+        
+        if x1 < 0 or y1 < 0 or x2 > w or y2 > h: return frame
+        
+        # 2. Eyelid Masking (Critical for "inside the eye" look)
+        # Define indices for Mediapipe Face Mesh eyelids
+        # Left Eye (from observer perspective, MP's Right) vs Right Eye
+        # Note: MP landmarks are mirroring-dependent
+        
+        if side == "left":
+             # Indices for left eye contour
+             indices = [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 145, 144, 163, 7]
+        else:
+             # Indices for right eye contour
+             indices = [362, 398, 384, 385, 386, 387, 388, 466, 263, 249, 390, 373, 374, 380, 381, 382]
+             
+        # Create eye polygon mask
+        eye_poly = []
+        for idx in indices:
+            lm = face_landmarks[idx]
+            eye_poly.append((int(lm.x * w), int(lm.y * h)))
+            
+        eye_poly = np.array(eye_poly, np.int32)
+        
+        # Create full frame mask
+        mask_full = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(mask_full, [eye_poly], 255)
+        
+        # Crop mask to Sharingan ROI
+        mask_roi = mask_full[y1:y2, x1:x2]
+        
+        # Ensure sizes match (handling boundary cases)
+        mh, mw = mask_roi.shape
+        if mh != diameter or mw != diameter:
+            mask_roi = cv2.resize(mask_roi, (diameter, diameter))
+
+        # Apply eyelid mask to alpha
+        a = cv2.bitwise_and(a, mask_roi)
+
+        # 3. Specular Highlight Preservation (Glint) - Optimized
+        roi = frame[y1:y2, x1:x2]
+        gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # Lower threshold to catch more glints (180 instead of 200)
+        _, glint_mask = cv2.threshold(gray_roi, 180, 255, cv2.THRESH_BINARY)
+        glint_mask = cv2.GaussianBlur(glint_mask, (3, 3), 0)
+        non_glint_mask = cv2.bitwise_not(glint_mask)
+        a = cv2.bitwise_and(a, non_glint_mask)
+        
+        # 4. Global Translucency (0.85 opacity)
+        a = (a * 0.85).astype(np.uint8)
+        
+        # Merge back
+        eye_overlay = cv2.merge([b, g, r, a])
+        
+        try:
+            return cvzone.overlayPNG(frame, eye_overlay, [x1, y1])
+        except:
+            return frame
+
     def render_effect(self, frame):
         face_found = False
         cx, cy = 0, 0
@@ -610,7 +774,7 @@ class FireballJutsuTrainer:
             effect_x, effect_y = cx, cy
             
             # For hand-based jutsu, use hand position (don't require face)
-            if effect_type in ["lightning", "water"]:
+            if effect_type in ["lightning", "water", "rasenshuriken", "rasengan"]:
                 if self.last_hand_center:
                     effect_x, effect_y = self.last_hand_center
                 elif not face_found:
@@ -699,6 +863,71 @@ class FireballJutsuTrainer:
                     # Fallback: simple circle if video not available
                     cv2.circle(frame, (effect_x, effect_y), 80, (255, 255, 0), 3)
                     cv2.putText(frame, "CHIDORI!", (effect_x-70, effect_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+
+            elif effect_type == "rasengan":
+                # Render Rasengan Video Effect
+                if self.rasengan_video is not None:
+                    ret_vid, vid_frame = self.rasengan_video.read()
+                    if not ret_vid:
+                        # Loop the video
+                        self.rasengan_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret_vid, vid_frame = self.rasengan_video.read()
+
+                    if ret_vid and vid_frame is not None:
+                        # Scale
+                        scale = 0.6  # Reduced from 0.8
+                        vid_frame = cv2.resize(vid_frame, None, fx=scale, fy=scale)
+                        effect_h, effect_w = vid_frame.shape[:2]
+
+                        # Calculate position (centered on hand)
+                        x1 = effect_x - effect_w // 2
+                        y1 = effect_y - effect_h // 2
+                        x2, y2 = x1 + effect_w, y1 + effect_h
+
+                        # Get frame dimensions
+                        fh, fw = frame.shape[:2]
+
+                        # Clamp to frame bounds
+                        src_x1 = max(0, -x1)
+                        src_y1 = max(0, -y1)
+                        src_x2 = effect_w - max(0, x2 - fw)
+                        src_y2 = effect_h - max(0, y2 - fh)
+
+                        dst_x1 = max(0, x1)
+                        dst_y1 = max(0, y1)
+                        dst_x2 = min(fw, x2)
+                        dst_y2 = min(fh, y2)
+
+                        # Apply additive blending with edge feathering
+                        if dst_x2 > dst_x1 and dst_y2 > dst_y1:
+                            roi = frame[dst_y1:dst_y2, dst_x1:dst_x2]
+                            effect_crop = vid_frame[src_y1:src_y2, src_x1:src_x2]
+
+                            # Create radial gradient mask for edge feathering
+                            mask_h, mask_w = effect_crop.shape[:2]
+                            center_x, center_y = mask_w // 2, mask_h // 2
+                            Y, X = np.ogrid[:mask_h, :mask_w]
+                            dist = np.sqrt(((X - center_x) / (mask_w / 2))**2 + ((Y - center_y) / (mask_h / 2))**2)
+                            # Reduced feathering: starts at 85% radius instead of 60%
+                            alpha = np.clip(1.0 - (dist - 0.85) / 0.15, 0, 1)
+                            alpha = (alpha ** 1.5).astype(np.float32)
+                            alpha_3ch = np.dstack([alpha, alpha, alpha])
+
+                            # Additive blend
+                            effect_float = effect_crop.astype(np.float32) * alpha_3ch
+                            blended = np.clip(roi.astype(np.float32) + effect_float, 0, 255).astype(np.uint8)
+                            frame[dst_y1:dst_y2, dst_x1:dst_x2] = blended
+
+                        # Apply Cyan/Light Blue tint for atmosphere
+                        tint = np.zeros_like(frame, dtype=np.uint8)
+                        tint[:, :] = (255, 200, 0)  # BGR - Cyan/Light Blue
+                        frame = cv2.addWeighted(frame, 0.90, tint, 0.10, 0)
+
+                else:
+                    # Fallback
+                    cv2.circle(frame, (effect_x, effect_y), 100, (255, 255, 255), 3)
+                    cv2.putText(frame, "RASENGAN!", (effect_x-120, effect_y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 3)
+
                 
             elif effect_type == "water":
                 # Render Water on hand (or face if hand missing)
@@ -708,6 +937,49 @@ class FireballJutsuTrainer:
             elif effect_type == "clone":
                 # Render Clone Text around face
                 cv2.putText(frame, "KAGE BUNSHIN!", (cx-120, cy-120), cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 200, 200), 3)
+            
+            elif effect_type == "eye":
+                # Render Sharingan Eye Effect
+                if self.sharingan_img is not None:
+                    # Iris landmarks: 468-472 (Left), 473-477 (Right)
+                    try:
+                        if len(face) >= 478:
+                            eyes_indices = [
+                                ((468, 469), "left"),  # Left eye
+                                ((473, 474), "right")  # Right eye
+                            ]
+                            for eye_indices_tuple, side in eyes_indices:
+                                frame = self._apply_eye_effect(frame, face, eye_indices_tuple, side=side)
+                        else:
+                            # Fallback if no iris landmarks (draw red circles)
+                            for idx in [159, 386]:
+                                center = face[idx]
+                                px, py = int(center.x * w), int(center.y * h)
+                                cv2.circle(frame, (px, py), 5, (0, 0, 255), 2)
+                                
+                    except Exception as e:
+                        pass
+                else:
+                     cv2.putText(frame, "SHARINGAN!", (effect_x-100, effect_y-150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+        # Render Sharingan if Always-On is active and not already rendered
+        should_render_always = self.show_sharingan_always and self.show_effects
+        already_rendered = False
+        if self.jutsu_active and self.show_effects:
+             current_jutsu = self.jutsu_names[self.current_jutsu_idx]
+             if self.jutsu_list[current_jutsu]["effect"] == "eye":
+                 already_rendered = True
+        
+        if should_render_always and not already_rendered and face_found:
+             # Use existing face/detection
+             if len(face) >= 478:
+                 # Iris landmarks: 468-472 (Left), 473-477 (Right)
+                 try:
+                    eyes_indices = [((468, 469), "left"), ((473, 474), "right")]
+                    for eye_indices_tuple, side in eyes_indices:
+                        frame = self._apply_eye_effect(frame, face, eye_indices_tuple, side=side)
+                 except:
+                    pass
                 
         return frame
 
@@ -764,12 +1036,18 @@ class FireballJutsuTrainer:
             cv2.putText(frame, f"Detect Zone", (t_x2+10, t_y2+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             self.setting_buttons.append(("toggle_region", (t_x2, t_y2, t_w, t_h)))
 
-            # Row 3: Effects
+            # Row 3: Effects, Sharingan
             # 5. Effects (Left)
             color = (0, 180, 0) if self.show_effects else (80, 80, 80)
             cv2.rectangle(frame, (t_x1, t_y3), (t_x1+t_w, t_y3+t_h), color, -1)
             cv2.putText(frame, f"Effects", (t_x1+10, t_y3+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             self.setting_buttons.append(("toggle_effects", (t_x1, t_y3, t_w, t_h)))
+
+            # 6. Sharingan (Right)
+            color = (0, 180, 0) if self.show_sharingan_always else (80, 80, 80)
+            cv2.rectangle(frame, (t_x2, t_y3), (t_x2+t_w, t_y3+t_h), color, -1)
+            cv2.putText(frame, f"Sharingan", (t_x2+10, t_y3+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            self.setting_buttons.append(("toggle_sharingan", (t_x2, t_y3, t_w, t_h)))
 
             # Separator (Shifted down)
             cv2.line(frame, (menu_x+20, menu_y+175), (menu_x+menu_w-20, menu_y+175), (100, 100, 100), 1)
@@ -884,6 +1162,8 @@ class FireballJutsuTrainer:
             self.show_detection_region = not self.show_detection_region
         elif name == "toggle_effects":
             self.show_effects = not self.show_effects
+        elif name == "toggle_sharingan":
+             self.show_sharingan_always = not self.show_sharingan_always
         elif name == "jutsu_prev":
             self.current_jutsu_idx = (self.current_jutsu_idx - 1) % len(self.jutsu_names)
             self._switch_jutsu()
@@ -945,6 +1225,11 @@ class FireballJutsuTrainer:
                             self.current_step = 0 
                             self.play_sound("complete")  # Play default completion sound
                             self.signature_sound_played = False # Flag to play signature sound later
+                            
+                            # Reset Video Effects if applicable
+                            current_jutsu_name = self.jutsu_names[self.current_jutsu_idx]
+                            if self.jutsu_list[current_jutsu_name]["effect"] == "rasengan" and self.rasengan_video:
+                                self.rasengan_video.set(cv2.CAP_PROP_POS_FRAMES, 0)
             else:
                 # Jutsu Active: Track hand for effect positioning (using fast MediaPipe)
                 mp_center = self.detect_hands_mediapipe(frame)
