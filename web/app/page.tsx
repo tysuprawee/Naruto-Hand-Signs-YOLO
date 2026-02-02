@@ -41,6 +41,11 @@ export default function Home() {
               Powered by local AI. No data leaves your device.
             </p>
 
+            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 bg-zinc-100 px-3 py-1.5 rounded-md w-fit">
+              <Info className="w-3 h-3" />
+              <span>Tip: Runs best on laptops with dedicated GPU.</span>
+            </div>
+
             <div className="flex items-center gap-4 pt-4">
               <Link
                 href="/play"

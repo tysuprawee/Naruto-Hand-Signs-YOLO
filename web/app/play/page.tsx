@@ -26,6 +26,11 @@ export default function PlayPage() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
 
+    // FPS Smoothing Refs
+    const lastFpsUpdate = useRef<number>(0);
+    const framesCount = useRef<number>(0);
+    const accumulatedTime = useRef<number>(0);
+
     // Initialize Modal
     useEffect(() => {
         async function loadModel() {
@@ -36,7 +41,7 @@ export default function PlayPage() {
 
                 // Create session
                 const session = await ort.InferenceSession.create(modelPath, {
-                    executionProviders: ["wasm"], // 'webgl' is faster but can be buggy on some devices
+                    executionProviders: ["webgl", "wasm"], // Try WebGL first, fallback to Wasm
                     graphOptimizationLevel: "all"
                 });
 
@@ -44,6 +49,7 @@ export default function PlayPage() {
                 setModel(session);
                 setLoading(false);
             } catch (e: any) {
+                // ... error handling
                 console.error("Failed to load model:", e);
                 setError("Failed to load AI model. Please check your connection.");
                 setLoading(false);
@@ -94,8 +100,8 @@ export default function PlayPage() {
         const start = performance.now();
 
         // 1. Prepare Input
-        const w = 640;
-        const h = 640;
+        const w = 320; // Reduced from 640 for speed
+        const h = 320;
 
         const ctx = canvasRef.current.getContext("2d");
         if (!ctx) return;
@@ -159,7 +165,19 @@ export default function PlayPage() {
         }
 
         const end = performance.now();
-        setInferenceTime(end - start);
+        const duration = end - start;
+
+        // Smoothing: update FPS only every 500ms
+        accumulatedTime.current += duration;
+        framesCount.current++;
+
+        const now = performance.now();
+        if (now - lastFpsUpdate.current > 500) {
+            setInferenceTime(accumulatedTime.current / framesCount.current);
+            accumulatedTime.current = 0;
+            framesCount.current = 0;
+            lastFpsUpdate.current = now;
+        }
 
         requestRef.current = requestAnimationFrame(runInference);
     }, [model]);
@@ -221,7 +239,7 @@ export default function PlayPage() {
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 text-sm font-bold text-zinc-400 bg-white border border-zinc-200 px-3 py-1 rounded-full shadow-sm">
                         <Camera className="w-4 h-4" />
-                        <span>{inferenceTime.toFixed(1)}ms</span>
+                        <span>FPS: {Math.round(1000 / (inferenceTime || 1))} ({inferenceTime.toFixed(1)}ms)</span>
                     </div>
                 </div>
             </div>
@@ -249,13 +267,40 @@ export default function PlayPage() {
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-20">
                         <AlertTriangle className="w-12 h-12 text-red-600 mb-4" />
                         <p className="text-red-600 font-black text-xl mb-2">SYSTEM ERROR</p>
-                        <p className="text-zinc-500 text-center px-8">{error}</p>
+                        <p className="text-zinc-500 text-center px-8 mb-6">{error}</p>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="bg-black text-white px-6 py-2 rounded-full font-bold uppercase tracking-wider text-sm hover:bg-zinc-800 transition-all shadow-lg flex items-center gap-2"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            Retry Camera
+                        </button>
                     </div>
                 )}
 
                 {/* Video/Canvas */}
-                <video ref={videoRef} className="hidden" autoPlay playsInline muted />
-                <canvas ref={canvasRef} width={640} height={640} className="w-full h-full object-cover grayscale-[0.2] contrast-125" />
+                {/* 
+                    Note: We keep the video hidden but accessible. 
+                    The canvas is what shows the output.
+                */}
+                <video
+                    ref={videoRef}
+                    className="hidden"
+                    autoPlay
+                    playsInline
+                    muted
+                    onLoadedMetadata={() => {
+                        console.log("Video metadata loaded");
+                        if (videoRef.current) videoRef.current.play();
+                    }}
+                />
+
+                <canvas
+                    ref={canvasRef}
+                    width={320}
+                    height={320}
+                    className="w-full h-full object-cover bg-black"
+                />
 
                 {/* Current Detection Banner */}
                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 w-full px-4 text-center">
