@@ -3,6 +3,10 @@ venv/
 .venv/
 env/
 
+# Environment Variables (SECRETS - NEVER COMMIT)
+.env
+.env.local
+
 # Python cache
 __pycache__/
 *.py[cod]

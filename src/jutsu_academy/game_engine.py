@@ -13,7 +13,7 @@ class GameSession(FireballJutsuTrainer):
         if not weights:
             raise FileNotFoundError("No model weights found!")
             
-        super().__init__(model_path=weights, camera_index=camera_index)
+        super().__init__(model_path=weights, camera_index=camera_index, username=username)
         
         self.mode = mode
         self.room_id = room_id
@@ -31,7 +31,7 @@ class GameSession(FireballJutsuTrainer):
         self.countdown_start_time = None
         self.start_time = None
         self.game_finished = False
-        self.final_time = 0.0
+        self.final_time = None
         
         # Multiplayer Setup
         self.network = None
@@ -112,16 +112,38 @@ class GameSession(FireballJutsuTrainer):
                     
                     # Draw Text
                     text = "PRESS [SPACE] TO START"
+                    subtext = "Use < > to Select Move"
+                    
                     font_scale = 1.0
                     thickness = 2
                     (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
                     x = (cam_w - w) // 2
-                    y = (cam_h + h) // 2
+                    y = (cam_h + h) // 2 - 40 # Move up slightly
                     
-                    # Shadow
+                    # Shadow & Text
                     cv2.putText(frame, text, (x+2, y+2), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0,0,0), thickness)
-                    # Text
                     cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), thickness)
+                    
+                    # Subtext (Controls)
+                    (ws, hs), _ = cv2.getTextSize(subtext, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                    xs = (cam_w - ws) // 2
+                    ys = y + 40
+                    cv2.putText(frame, subtext, (xs, ys), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+                    
+                    # Rules
+                    rules1 = "GOAL: Perform all signs as FAST as possible."
+                    rules2 = "Timer STOPS immediately on the last sign."
+                    rules3 = "Reach Rank #1 to become the HOKAGE!"
+                    
+                    cv2.putText(frame, rules1, (xs - 50, ys + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    cv2.putText(frame, rules2, (xs - 50, ys + 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    cv2.putText(frame, rules3, (xs - 50, ys + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 215, 0), 1) # Gold color
+                    
+                    # Subtext
+                    (ws, hs), _ = cv2.getTextSize(subtext, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                    xs = (cam_w - ws) // 2
+                    ys = y + 40
+                    cv2.putText(frame, subtext, (xs, ys), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
                     
                     return frame # Skip detection
                     
@@ -190,8 +212,11 @@ class GameSession(FireballJutsuTrainer):
             
         # Draw Timer for Challenge
         if self.mode == "challenge" and self.start_time and not self.game_finished:
-            elapsed = time.time() - self.start_time
-            cv2.putText(frame, f"TIME: {elapsed:.2f}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
+            if hasattr(self, 'final_time') and self.final_time is not None:
+                elapsed = self.final_time
+            else:
+                elapsed = time.time() - self.start_time
+            cv2.putText(frame, f"TIME: {elapsed:.2f}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
         
         # Stack UI
         try:
@@ -208,10 +233,26 @@ class GameSession(FireballJutsuTrainer):
         if self.mode == "challenge" and self.waiting_for_start and not self.countdown_start_time:
             self.countdown_start_time = time.time()
 
+    def reset_to_lobby(self):
+        """Reset to selection phase (lobby) without starting countdown."""
+        self.game_finished = False
+        self.final_time = None
+        self.start_time = None
+        self.jutsu_active = False
+        self.current_step = 0
+        self.waiting_for_start = True
+        self.countdown_start_time = None # NO Countdown yet
+        self.signature_sound_played = False
+
     def activate_jutsu_effect(self, frame=None):
         print("[!!!] JUTSU ACTIVATED [!!!]")
         self.jutsu_active = True
         self.jutsu_start_time = time.time()
+        
+        # Stop Timer (Challenge Mode)
+        if self.mode == "challenge" and self.start_time:
+             self.final_time = self.jutsu_start_time - self.start_time
+             
         self.current_step = 0 
         self.play_sound("complete")
         self.signature_sound_played = False
@@ -220,7 +261,10 @@ class GameSession(FireballJutsuTrainer):
              self.send_attack(frame) # Send capture
 
     def finish_challenge(self):
-        self.final_time = time.time() - self.start_time
+        # self.final_time is set in activate_jutsu_effect
+        if not hasattr(self, 'final_time'):
+            self.final_time = time.time() - self.start_time
+            
         self.game_finished = True
         
         # Get Jutsu Name for Category

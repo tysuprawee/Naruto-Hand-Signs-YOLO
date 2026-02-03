@@ -10,6 +10,7 @@ import requests
 import json
 from io import BytesIO
 import pygame  # Add pygame import
+import base64
 
 try:
     from pygrabber.dshow_graph import FilterGraph
@@ -21,6 +22,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from src.jutsu_academy.game_engine import GameSession, NetworkManager
 
+# --- Supabase Cloud Integration (Secure) ---
+from dotenv import load_dotenv
+load_dotenv()
+from supabase import create_client, Client
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+
+
+
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
 
@@ -28,7 +39,7 @@ class LauncherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Jutsu Academy v1.01")
+        self.title("Jutsu Academy v1.00 Prototype")
         self.geometry("1024x768")
         
         # State
@@ -39,6 +50,9 @@ class LauncherApp(ctk.CTk):
         self.camera_map = {}
         
         self.load_session() # Load persistent login
+        
+        # --- ONLINE STATUS ---
+        self.online = supabase is not None  # Check if Supabase client was created
 
         # --- AUDIO ---
         self.music_volume = 0.35
@@ -566,10 +580,10 @@ class LauncherApp(ctk.CTk):
                       fg_color="#444", hover_color="#666",
                       command=lambda: self.start_game_with_user("practice")).pack(pady=10)
                       
-        # Competitive
+        # Competitive (Requires Online)
         ctk.CTkButton(pnl, text="COMPETITIVE", font=btn_font, width=300, height=60,
                       fg_color="#D32F2F", hover_color="#B71C1C",
-                      command=lambda: self.start_game_with_user("challenge")).pack(pady=10)
+                      command=self.handle_competitive_click).pack(pady=10)
 
         # Multiplayer
         ctk.CTkButton(pnl, text="MULTIPLAYER (Locked)", font=btn_font, width=300, height=60,
@@ -580,6 +594,11 @@ class LauncherApp(ctk.CTk):
         ctk.CTkButton(pnl, text="SETTINGS", font=btn_font, width=300, height=60,
                       fg_color="#333", hover_color="#555",
                       command=self.show_settings_menu).pack(pady=10)
+        
+        # CREATE JUTSU (Always visible, but checks login)
+        ctk.CTkButton(pnl, text="CREATE JUTSU (+)", font=("Arial", 16, "bold"), width=300, height=50,
+                      fg_color="#3b82f6", hover_color="#2563eb",
+                      command=self.handle_create_jutsu_click).pack(pady=10)
 
         # Leaderboard with Back Link
         link_frame = ctk.CTkFrame(pnl, fg_color="transparent")
@@ -591,7 +610,7 @@ class LauncherApp(ctk.CTk):
                       
         ctk.CTkButton(link_frame, text="View Leaderboards", font=("Arial", 14), 
                       fg_color="transparent", text_color="gold", hover_color="#222", width=120,
-                      command=self.show_leaderboard).pack(side="left", padx=20)
+                      command=self.handle_leaderboard_click).pack(side="left", padx=20)
 
     def back_to_main_from_practice(self):
         if hasattr(self, 'practice_outer'):
@@ -725,6 +744,13 @@ class LauncherApp(ctk.CTk):
              self.username = "Guest"
              
         self.start_game(mode=mode, room_id=None)
+
+    def handle_leaderboard_click(self):
+        """Check online before showing leaderboards."""
+        if not self.online:
+            self.show_offline_popup("Leaderboards")
+            return
+        self.show_leaderboard()
 
     def show_leaderboard(self):
         # Hide Main Menu (since button is now there)
@@ -928,12 +954,8 @@ class LauncherApp(ctk.CTk):
     def handle_space_bar(self, event):
         if self.current_session and self.is_game_active:
             if self.current_session.game_finished:
-                 # Restart Challenge
-                 mode = self.current_session.mode
-                 self.stop_game()
-                 # Short delay to allow cleanup? Actually stop_game is sync.
-                 # But start_game_with_user starts a thread. It should be fine.
-                 self.start_game_with_user(mode)
+                 # Restart to Lobby
+                 self.current_session.reset_to_lobby()
             else:
                 self.current_session.start_challenge()
 
@@ -942,13 +964,16 @@ class LauncherApp(ctk.CTk):
             
     def prev_jutsu(self):
         if self.current_session and self.is_game_active:
-            self.current_session.prev_jutsu()
-            self.update_jutsu_label()
+             # Only allow change if Waiting and NOT in countdown
+             if self.current_session.waiting_for_start and not self.current_session.countdown_start_time:
+                 self.current_session.prev_jutsu()
+                 self.update_jutsu_label()
 
     def next_jutsu(self):
         if self.current_session and self.is_game_active:
-            self.current_session.next_jutsu()
-            self.update_jutsu_label()
+             if self.current_session.waiting_for_start and not self.current_session.countdown_start_time:
+                 self.current_session.next_jutsu()
+                 self.update_jutsu_label()
             
     def update_jutsu_label(self):
         if self.current_session:
@@ -1031,9 +1056,213 @@ class LauncherApp(ctk.CTk):
             # Create CTkImage (no scaling by CTk needed now)
             ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
             self.game_label.configure(image=ctk_img)
+            
+        # 4. Update UI Visibility (Hide Arrows during Challenge)
+        if self.current_session and self.current_session.mode == "challenge":
+            show_arrows = (self.current_session.waiting_for_start and 
+                           not self.current_session.countdown_start_time)
+            
+            if show_arrows:
+                self.btn_prev.place(relx=0.05, rely=0.5, anchor="center")
+                self.btn_next.place(relx=0.95, rely=0.5, anchor="center")
+            else:
+                self.btn_prev.place_forget()
+                self.btn_next.place_forget()
         
-        # 4. Schedule next update (Target ~60 FPS = 16ms)
+        # 5. Schedule next update (Target ~60 FPS = 16ms)
         self.after(16, self.update_game_loop)
+    
+    def show_offline_popup(self, feature_name="This feature"):
+        """Show popup when trying to use an online feature while offline."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("Internet Required")
+        popup.geometry("380x200")
+        popup.attributes("-topmost", True)
+        
+        ctk.CTkLabel(popup, text="📡 No Internet Connection", font=("Impact", 22), text_color="#ef4444").pack(pady=15)
+        ctk.CTkLabel(popup, text=f"{feature_name} requires an internet connection.\n\nPlease check your network and try again.", 
+                     font=("Arial", 13), text_color="#ccc", wraplength=340).pack(pady=5)
+        
+        ctk.CTkButton(popup, text="OK", width=100, fg_color="#333", command=popup.destroy).pack(pady=15)
+    
+    def handle_competitive_click(self):
+        """Check online before starting Competitive mode."""
+        if not self.online:
+            self.show_offline_popup("Competitive Mode")
+            return
+        self.start_game_with_user("challenge")
+    
+    def handle_create_jutsu_click(self):
+        """Check login and online before allowing jutsu creation."""
+        # Check online first
+        if not self.online:
+            self.show_offline_popup("Create Jutsu")
+            return
+            
+        # Check login
+        if getattr(self, 'discord_user', None):
+            # Logged in - open the creator
+            self.open_create_jutsu_dialog()
+        else:
+            # Guest - show sign in prompt
+            popup = ctk.CTkToplevel(self)
+            popup.title("Login Required")
+            popup.geometry("350x180")
+            popup.attributes("-topmost", True)
+            
+            ctk.CTkLabel(popup, text="🔒 Login Required", font=("Impact", 22), text_color="#f59e0b").pack(pady=15)
+            ctk.CTkLabel(popup, text="You must sign in with Discord\nto create custom jutsus!", font=("Arial", 14), text_color="#ccc").pack(pady=5)
+            
+            ctk.CTkButton(popup, text="OK", width=100, fg_color="#333", command=popup.destroy).pack(pady=15)
+
+    def open_create_jutsu_dialog(self):
+        """Opens a modal to create a custom jutsu."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Create New Jutsu")
+        dialog.geometry("500x600")
+        dialog.attributes("-topmost", True)
+        
+        # Heading
+        ctk.CTkLabel(dialog, text="Design Your Jutsu", font=("Impact", 24)).pack(pady=10)
+        
+        # Name Input
+        ctk.CTkLabel(dialog, text="Jutsu Name:", font=("Arial", 14)).pack(pady=5)
+        name_var = ctk.StringVar()
+        entry_name = ctk.CTkEntry(dialog, textvariable=name_var, width=300)
+        entry_name.pack(pady=5)
+        
+        # Sequence Tracker
+        sequence = []
+        lbl_sequence = ctk.CTkLabel(dialog, text="Sequence: (Empty)", font=("Arial", 14, "bold"), text_color="#f59e0b", wraplength=450)
+        lbl_sequence.pack(pady=10)
+        
+        def update_seq_label():
+            if not sequence:
+                lbl_sequence.configure(text="Sequence: (Empty)")
+            else:
+                lbl_sequence.configure(text=f"Sequence: {' -> '.join(sequence)}")
+        
+        def add_sign(sign):
+            if len(sequence) >= 10:
+                return # Max limit
+            sequence.append(sign)
+            update_seq_label()
+            
+        def clear_seq():
+            sequence.clear()
+            update_seq_label()
+            
+        # Sign Buttons Grid (With Picture Previews)
+        signs_frame = ctk.CTkFrame(dialog, fg_color="#1a1a1a", corner_radius=10)
+        signs_frame.pack(pady=10, padx=20, fill="x")
+        
+        available_signs = ["tiger", "boar", "snake", "ram", "bird", "dragon", "dog", "rat", "horse", "monkey", "ox", "hare"]
+        
+        # Pre-load sign icons
+        sign_icons = {}
+        for sign in available_signs:
+            try:
+                icon_path = os.path.join("src", "pics", f"{sign}.png")
+                if os.path.exists(icon_path):
+                    pil_img = Image.open(icon_path).resize((40, 40))
+                    sign_icons[sign] = ctk.CTkImage(pil_img, size=(40, 40))
+                else:
+                    sign_icons[sign] = None
+            except:
+                sign_icons[sign] = None
+        
+        row = 0
+        col = 0
+        for sign in available_signs:
+            btn_frame = ctk.CTkFrame(signs_frame, fg_color="transparent")
+            btn_frame.grid(row=row, column=col, padx=8, pady=8)
+            
+            # Icon + Text Button
+            if sign_icons.get(sign):
+                btn = ctk.CTkButton(
+                    btn_frame,
+                    text="",
+                    image=sign_icons[sign],
+                    width=50, height=50,
+                    fg_color="#333",
+                    hover_color="#555",
+                    command=lambda s=sign: add_sign(s)
+                )
+            else:
+                btn = ctk.CTkButton(
+                    btn_frame,
+                    text=sign[:3].upper(),
+                    width=50, height=50,
+                    fg_color="#333",
+                    hover_color="#555",
+                    command=lambda s=sign: add_sign(s)
+                )
+            btn.pack()
+            
+            # Sign name label below icon
+            ctk.CTkLabel(btn_frame, text=sign.capitalize(), font=("Arial", 10), text_color="#888").pack()
+            
+            col += 1
+            if col > 5:  # 6 columns
+                col = 0
+                row += 1
+                
+        # Controls
+        ctk.CTkButton(dialog, text="Clear Sequence", fg_color="red", command=clear_seq).pack(pady=5)
+        
+        def save_jutsu():
+            name = name_var.get().strip()
+            if not name:
+                print("Name required")
+                return
+            if not sequence:
+                print("Sequence required")
+                return
+            
+            # Create Data Object
+            new_jutsu = {
+                "sequence": sequence,
+                "display_text": f"{name.upper()}!!",
+                "sound_path": None,
+                "video_path": None,
+                "effect": "fire" # Default to fire for custom
+            }
+            
+            # File Path (Local Cache)
+            custom_path = os.path.join("src", "custom_jutsus.dat")
+            
+            try:
+                # === CLOUD SAVE (Supabase) ===
+                response = supabase.table("custom_jutsus").insert({
+                    "user_id": self.username,
+                    "name": name,
+                    "sequence": sequence
+                }).execute()
+                print(f"[+] Cloud Saved: {name} for {self.username}")
+                
+                # === LOCAL CACHE (Backup) ===
+                current_data = {}
+                if os.path.exists(custom_path):
+                    with open(custom_path, "rb") as f:
+                         encoded = f.read()
+                         current_data = json.loads(base64.b64decode(encoded).decode('utf-8'))
+                
+                current_data[name] = new_jutsu
+                
+                json_str = json.dumps(current_data)
+                encoded_str = base64.b64encode(json_str.encode('utf-8'))
+                
+                with open(custom_path, "wb") as f:
+                    f.write(encoded_str)
+                    
+                print(f"[+] Local Cache Updated: {name}")
+                dialog.destroy()
+                
+            except Exception as e:
+                print(f"[!] Failed to save: {e}")
+        
+        ctk.CTkButton(dialog, text="SAVE JUTSU", fg_color="green", height=40, command=save_jutsu).pack(pady=20)
+
 
 if __name__ == "__main__":
     app = LauncherApp()

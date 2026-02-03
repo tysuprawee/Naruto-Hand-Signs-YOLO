@@ -15,10 +15,29 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.utils.paths import get_class_names, get_latest_weights
 from src.utils.visualization import draw_detection_box, create_class_color_map
+from src.utils.visualization import draw_detection_box, create_class_color_map
 from src.utils.fire_effect import FireEffect
+from src.jutsu_registry import OFFICIAL_JUTSUS
+import json
+import base64
+import threading
+
+# --- Supabase Cloud Integration (Secure) ---
+import os
+from dotenv import load_dotenv
+load_dotenv()  # Load from .env file
+
+from supabase import create_client, Client
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+
+
 
 class FireballJutsuTrainer:
-    def __init__(self, model_path, camera_index=0):
+    def __init__(self, model_path, camera_index=0, username="Ninja"):
+        self.username = username  # Store for cloud sync
+        
         # Initialize YOLO
         print(f"[*] Loading YOLO model from {model_path}...")
         self.model = YOLO(model_path)
@@ -164,87 +183,113 @@ class FireballJutsuTrainer:
         if self.sharingan_img is None:
             print(f"[!] Sharingan texture not found in src/sharingan/")
         
-        # Load Jutsu from recipe.txt
-        self.jutsu_list = self._load_jutsu_recipes()
+        # Load Jutsu from registry + cache first (instant)
+        self.jutsu_list = self._load_local_jutsus()
+        self._start_cloud_sync(self.username) # Fetch cloud moves for THIS user
         self._init_continued()  # Continue with rest of initialization
     
-    def _load_jutsu_recipes(self):
-        """Load jutsu definitions from recipe.txt"""
-        recipe_path = Path(__file__).parent / "recipe.txt"
-        jutsu_list = {}
+    def _load_local_jutsus(self):
+        """Load Official Registry + Local Cache (Instant)."""
+        jutsu_list = OFFICIAL_JUTSUS.copy()
         
-        # Effect type mapping based on jutsu name keywords
-        effect_map = {
-            "fireball": "fire",
-            "phoenix": "fire",
-            "chidori": "lightning",
-            "water": "water",
-            "dragon": "water",
-            "shuriken": "rasen", # support old name if needed
-            "rasengan": "rasengan",
-            "clone": "clone",
-            "dragon": "water",
-            "clone": "clone",
-            "shadow": "clone",
-            "sharingan": "eye",
-            "eye": "eye"
-        }
-        
+        custom_path = Path(__file__).parent.parent / "custom_jutsus.dat"
+        if custom_path.exists():
+            try:
+                with open(custom_path, 'rb') as f:
+                    encoded_data = f.read()
+                    decoded_str = base64.b64decode(encoded_data).decode('utf-8')
+                    custom_jutsus = json.loads(decoded_str)
+                    
+                    for name, data in custom_jutsus.items():
+                        if name not in jutsu_list:
+                            jutsu_list[name] = data
+                            print(f"[+] Loaded cached jutsu: {name}")
+            except Exception as e2:
+                print(f"[!] Failed to load local cache: {e2}")
+        return jutsu_list
+
+    def _start_cloud_sync(self, username="Ninja"):
+        """Start background thread to fetch cloud jutsus."""
+        t = threading.Thread(target=self._fetch_cloud_jutsus_thread, args=(username,), daemon=True)
+        t.start()
+
+    def _fetch_cloud_jutsus_thread(self, username):
+        """Background worker to fetch Supabase data."""
         try:
-            with open(recipe_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    parts = line.split(',', 2)  # Split name, then rest
-                    if len(parts) < 2:
-                        continue
-                    
-                    name = parts[0].strip()
-                    
-                    # Parse sequence from [sign1,sign2,...]
-                    rest = ','.join(parts[1:])
-                    seq_start = rest.find('[')
-                    seq_end = rest.find(']')
-                    if seq_start == -1 or seq_end == -1:
-                        continue
-                    
-                    sequence_str = rest[seq_start+1:seq_end]
-                    sequence = [s.strip() for s in sequence_str.split(',')]
-                    
-                    # Parse remaining fields after sequence
-                    remaining = rest[seq_end+1:].lstrip(',').split(',')
-                    
-                    display_text = remaining[0].strip() if len(remaining) > 0 else ""
-                    sound_path = remaining[1].strip() if len(remaining) > 1 else "none"
-                    video_path = remaining[2].strip() if len(remaining) > 2 else "none"
-                    
-                    # Determine effect type
-                    effect = "fire"  # default
-                    name_lower = name.lower()
-                    for keyword, eff_type in effect_map.items():
-                        if keyword in name_lower:
-                            effect = eff_type
-                            break
-                    
-                    # Extract just filename for sound (for backward compatibility)
-                    sound_file = Path(sound_path).name if sound_path != "none" else ""
-                    
-                    jutsu_list[name] = {
-                        "sequence": sequence,
-                        "effect": effect,
-                        "sound": sound_file,
-                        "display_text": display_text if display_text != "none" else "",
-                        "sound_path": sound_path if sound_path != "none" else "",
-                        "video_path": video_path if video_path != "none" else ""
-                    }
-                    print(f"[+] Loaded jutsu: {name} ({len(sequence)} signs)")
-                    
-        except Exception as e:
-            print(f"[!] Error loading recipe.txt: {e}")
-            # Fallback to empty dict
+            # print("[*] Syncing jutsus from cloud...")
+            response = supabase_client.table("custom_jutsus").select("*").eq("user_id", username).execute()
             
+            count = 0
+            for row in response.data:
+                name = row.get("name")
+                sequence = row.get("sequence")
+                
+                # Check conflict
+                if name in OFFICIAL_JUTSUS:
+                    continue
+                
+                # Update main list (Dict operations are atomic-ish in GIL, safe enough here)
+                self.jutsu_list[name] = {
+                    "sequence": sequence,
+                    "display_text": f"{name.upper()}!!",
+                    "sound_path": None,
+                    "video_path": None,
+                    "effect": "fire"
+                }
+                count += 1
+            
+            if count > 0:
+                print(f"[+] Cloud Sync Complete: Loaded {count} new jutsus from Supabase.")
+                
+        except Exception as e:
+            print(f"[!] Cloud Sync Failed (Offline?): {e}")
+
+    # DEPRECATED: Old Sync Load
+    def _load_jutsu_recipes_OLD(self, username="Ninja"):
+        """Load jutsus from Registry (Official) and Supabase (Custom Cloud)."""
+        # 1. Start with Official (Deep Copy to be safe)
+        jutsu_list = OFFICIAL_JUTSUS.copy()
+        
+        # 2. Load Custom from CLOUD (Supabase)
+        try:
+            response = supabase_client.table("custom_jutsus").select("*").eq("user_id", username).execute()
+            
+            for row in response.data:
+                name = row.get("name")
+                sequence = row.get("sequence") # Already a list from JSONB
+                
+                # SECURITY: Do NOT allow overwriting Official Jutsus
+                if name in jutsu_list:
+                    print(f"[!] Warning: Custom jutsu '{name}' conflicts with Official. Ignoring.")
+                    continue
+                
+                jutsu_list[name] = {
+                    "sequence": sequence,
+                    "display_text": f"{name.upper()}!!",
+                    "sound_path": None,
+                    "video_path": None,
+                    "effect": "fire" # Default for custom
+                }
+                print(f"[+] Loaded cloud jutsu: {name}")
+                
+        except Exception as e:
+            print(f"[!] Failed to load cloud jutsus: {e}")
+            # Fallback to local cache if cloud fails
+            custom_path = Path(__file__).parent.parent / "custom_jutsus.dat"
+            if custom_path.exists():
+                try:
+                    with open(custom_path, 'rb') as f:
+                        encoded_data = f.read()
+                        decoded_str = base64.b64decode(encoded_data).decode('utf-8')
+                        custom_jutsus = json.loads(decoded_str)
+                        
+                        for name, data in custom_jutsus.items():
+                            if name not in jutsu_list:
+                                jutsu_list[name] = data
+                                print(f"[+] Loaded cached jutsu: {name}")
+                except Exception as e2:
+                    print(f"[!] Failed to load local cache: {e2}")
+                
         return jutsu_list
     
     def _init_continued(self):
@@ -531,9 +576,26 @@ class FireballJutsuTrainer:
         h, w, _ = panel.shape
         
         # Settings for icons
-        icon_size = 80
-        gap = 20
-        total_width = len(self.sequence) * (icon_size + gap) - gap
+        max_icon_size = 80
+        gap = 10
+        margin = 40
+        n_signs = len(self.sequence)
+        
+        # Calculate optimal size
+        # Available Width = cam_width - 2*margin
+        # Width = N * size + (N-1) * gap
+        # size = (Available - (N - 1) * gap) / N
+        
+        available_w = cam_width - margin
+        if n_signs > 0:
+            calc_size = int((available_w - (n_signs - 1) * gap) / n_signs)
+            icon_size = min(max_icon_size, calc_size)
+            # Ensure at least somewhat visible
+            icon_size = max(40, icon_size)
+        else:
+            icon_size = max_icon_size
+            
+        total_width = n_signs * (icon_size + gap) - gap
         start_x = (w - total_width) // 2
         y_pos = (h - icon_size) // 2
         

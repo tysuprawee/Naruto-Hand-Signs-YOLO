@@ -1,4 +1,4 @@
-# Naruto Hand Signs YOLO
+# Jutsu Academy (v1.00 Prototype)
 
 A complete Python project for training and running a YOLO model to recognize Naruto hand signs from a webcam.
 

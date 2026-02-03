@@ -1,7 +1,0 @@
-Fireball,[horse,snake,ram,monkey,boar,horse,tiger],KATON: GOUKAKYUU NO JUTSU!!,src\sounds\fireball.mp3,none
-Chidori,[ox,hare,monkey],CHIDORI: KAZUSA NO JUTSU!,src\chidori\chidori.mp3,src\chidori\chidori.mp4
-Water Dragon,[ox,monkey,hare,rat,boar,bird,ox,horse,bird],Water Dragon,none,none
-Shadow Clone,[ram,snake,tiger],Shadow Clone,none,none
-Phoenix Flower,[rat,tiger,dog,ox,hare,tiger],Phoenix Flower,none,none
-Sharingan,[snake,ram,monkey,boar,horse,tiger],Sharingan,none,none
-Rasengan,[ram],RASENGAN!,none,src\RasenShuriken\RasenShuriken.mp4
