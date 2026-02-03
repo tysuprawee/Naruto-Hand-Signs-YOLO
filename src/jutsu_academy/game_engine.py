@@ -62,6 +62,13 @@ class GameSession(FireballJutsuTrainer):
 
     def process_frame(self):
         """Run one iteration of the game loop and return the frame."""
+        ret, frame = self.cap.read()
+        if not ret: return None
+        
+        # Flip frame
+        frame = cv2.flip(frame, 1)
+        cam_h, cam_w = frame.shape[:2]
+
         if self.mode == "challenge":
             if self.waiting_for_start:
                 # Dim background slightly
@@ -97,13 +104,6 @@ class GameSession(FireballJutsuTrainer):
         
         if self.mode == "challenge" and self.game_finished:
             return self.render_challenge_complete()
-
-        ret, frame = self.cap.read()
-        if not ret: return None
-        
-        # Flip frame
-        frame = cv2.flip(frame, 1)
-        cam_h, cam_w = frame.shape[:2]
         
         # --- TURN / DETECTION LOGIC ---
         should_detect = True

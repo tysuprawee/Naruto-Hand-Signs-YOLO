@@ -5,6 +5,7 @@ import cv2
 import threading
 from PIL import Image
 import numpy as np
+import webbrowser
 
 try:
     from pygrabber.dshow_graph import FilterGraph
@@ -183,59 +184,173 @@ class LauncherApp(ctk.CTk):
         return available
 
     def setup_menu(self):
-        # Menu Layout - Center Everything
-        self.menu_frame.grid_columnconfigure(0, weight=1)
-        self.menu_frame.grid_rowconfigure(0, weight=1) # Spacer
-        self.menu_frame.grid_rowconfigure(1, weight=0) # Content
-        self.menu_frame.grid_rowconfigure(2, weight=1) # Spacer
+        # 1. Background Image Handling
+        try:
+            bg_path = os.path.join("src", "socials", "vl2.png")
+            if os.path.exists(bg_path):
+                self.original_bg = Image.open(bg_path) # Keep original
+                
+                # Initial set to window size
+                self.bg_photo = ctk.CTkImage(self.original_bg, size=(1024, 768))
+                
+                self.bg_label = ctk.CTkLabel(self.menu_frame, image=self.bg_photo, text="")
+                self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+                
+                # Bind resize event to handle fullsceren
+                self.menu_frame.bind('<Configure>', self.resize_bg)
+        except Exception as e:
+            print(f"Failed to load BG: {e}")
 
-        # Content Frame (Centered)
-        content_frame = ctk.CTkFrame(self.menu_frame, fg_color="transparent")
-        content_frame.grid(row=1, column=0)
-        
-        # Header
-        lbl_title = ctk.CTkLabel(
-            content_frame, 
-            text="JUTSU ACADEMY", 
-            font=("Impact", 64),
-            text_color="#00EE00"
+        # 2. Central Card Panel (Glass/Dark Theme)
+        # Centered using place() on top of the background (relx/rely keeps it centered even on resize)
+        self.center_panel = ctk.CTkFrame(
+            self.menu_frame, 
+            fg_color="#18181b", # Dark Charcoal
+            corner_radius=20, 
+            border_width=1, 
+            border_color="#333",
+            width=450 # Min width hint
         )
-        lbl_title.pack(pady=(0, 40))
+        self.center_panel.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Inner Container for Padding
+        # We pack everything inside this 'pnl'
+        pnl = ctk.CTkFrame(self.center_panel, fg_color="transparent")
+        pnl.pack(padx=50, pady=40, fill="both", expand=True)
+
+        # --- HEADER (Logo & Subtitle) ---
+        title_frame = ctk.CTkFrame(pnl, fg_color="transparent")
+        title_frame.pack(pady=(0, 5))
         
-        # Camera Selection
-        lbl_cam = ctk.CTkLabel(content_frame, text="SELECT CAMERA:", font=("Arial", 12), text_color="gray")
-        lbl_cam.pack(pady=(0, 5))
+        # Dual Color Title
+        ctk.CTkLabel(title_frame, text="JUTSU", font=("Impact", 42), text_color="#f59e0b").pack(side="left")
+        ctk.CTkLabel(title_frame, text=" ACADEMY", font=("Impact", 42), text_color="#f4f4f5").pack(side="left")
+        
+        ctk.CTkLabel(pnl, text="TRAIN • MASTER • RANK UP", font=("Arial", 11, "bold"), text_color="#71717a").pack(pady=(0, 35))
+
+        # --- CAMERA SELECTION ---
+        cam_row = ctk.CTkFrame(pnl, fg_color="transparent")
+        cam_row.pack(pady=(0, 25))
+        
+        ctk.CTkLabel(cam_row, text="CAMERA", font=("Arial", 12, "bold"), text_color="#a1a1aa").pack(side="left", padx=(0, 15))
         
         self.camera_dropdown = ctk.CTkOptionMenu(
-            content_frame, 
-            values=["Scanning Cameras..."],
-            width=300,
+            cam_row, 
+            values=["Scanning..."], 
+            width=220,
             command=self.on_camera_select,
-            state="disabled"
+            fg_color="#27272a", 
+            button_color="#3f3f46", 
+            button_hover_color="#52525b",
+            text_color="white",
+            dropdown_fg_color="#27272a"
         )
-        self.camera_dropdown.pack(pady=(0, 20))
+        self.camera_dropdown.pack(side="left")
+        self.camera_dropdown.configure(state="disabled")
+
+        # --- MAIN ACTIONS ---
+        btn_font = ("Arial", 14, "bold")
         
-        # Buttons
-        ctk.CTkButton(content_frame, text="PRACTICE MODE", font=("Arial", 20, "bold"), width=350, height=60, corner_radius=30,
-                      command=self.launch_practice).pack(pady=10)
-                      
-        ctk.CTkButton(content_frame, text="MULTIPLAYER (COMING SOON)", font=("Arial", 20, "bold"), width=350, height=60, corner_radius=30,
-                      fg_color="#333333", state="disabled").pack(pady=10)
-                      
-        ctk.CTkButton(content_frame, text="VIEW LEADERBOARD", font=("Arial", 20, "bold"), width=350, height=60, corner_radius=30,
-                      fg_color="#3B8ED0", hover_color="#36719F",
-                      command=self.show_leaderboard).pack(pady=10)
-                      
-        ctk.CTkButton(content_frame, text="EXIT", font=("Arial", 16), width=200, height=40, fg_color="transparent", border_width=2,
-                      command=self.destroy).pack(pady=30)
-                      
-        # Footer Info
-        footer_frame = ctk.CTkFrame(self.menu_frame, fg_color="transparent")
-        footer_frame.grid(row=2, column=0, sticky="s", pady=20)
+        # Primary: Singleplayer (Orange)
+        ctk.CTkButton(pnl, text="SINGLEPLAYER", font=btn_font, height=50, corner_radius=12,
+                      fg_color="#f59e0b", hover_color="#d97706", text_color="black",
+                      command=self.launch_practice).pack(fill="x", pady=8)
+
+        # Secondary: Multiplayer (Locked/Dark)
+        ctk.CTkButton(pnl, text="MULTIPLAYER (LOCKED)", font=btn_font, height=50, corner_radius=12,
+                      fg_color="#27272a", hover_color="#27272a", text_color="#52525b", 
+                      state="disabled").pack(fill="x", pady=8)
+
+        # Tertiary: Hall of Fame (Blue)
+        ctk.CTkButton(pnl, text="HALL OF FAME", font=btn_font, height=50, corner_radius=12,
+                      fg_color="#0ea5e9", hover_color="#0284c7", text_color="white",
+                      command=self.show_leaderboard).pack(fill="x", pady=8)
+
+        # Exit: Ghost/Outline
+        ctk.CTkButton(pnl, text="EXIT", font=btn_font, height=45, corner_radius=12,
+                      fg_color="transparent", border_width=2, border_color="#3f3f46", 
+                      text_color="#d4d4d8", hover_color="#27272a",
+                      command=self.destroy).pack(fill="x", pady=(25, 15))
+
+        # --- FOOTER ---
+        # Social Icons Row
+        social_frame = ctk.CTkFrame(pnl, fg_color="transparent")
+        social_frame.pack(pady=(0, 10))
         
-        ctk.CTkLabel(footer_frame, text="Developed by Ty Suprawee", font=("Arial", 12), text_color="#666").pack()
-        ctk.CTkLabel(footer_frame, text="Specs: Webcam Required | GPU Recommended", font=("Arial", 10), text_color="#444").pack()
+        def load_icon(filename):
+            try:
+                path = os.path.join("src", "socials", filename)
+                img = Image.open(path)
+                return ctk.CTkImage(img, size=(24, 24))
+            except:
+                return None
+
+        # Helper for social buttons
+        def social_btn(img, link):
+            if img:
+                ctk.CTkButton(social_frame, text="", image=img, width=32, height=32, 
+                              fg_color="transparent", hover_color="#27272a", corner_radius=8,
+                              command=lambda: webbrowser.open(link)).pack(side="left", padx=5)
+
+        social_btn(load_icon("Instagram_logo_2016.svg.png"), "https://www.instagram.com/james.uzumaki_/")
+        social_btn(load_icon("YouTube_full-color_icon_(2017).svg.webp"), "https://www.youtube.com/@James_Uzumaki")
+        social_btn(load_icon("discord-logo-discord-icon-transparent-free-png.png"), "https://discord.gg/7xBQ22SnN2")
+        
+        # Meta Links
+        ctk.CTkButton(pnl, text="About Jutsu Academy", font=("Arial", 11), 
+                      fg_color="transparent", text_color="#71717a", hover_color="#27272a", 
+                      height=20, width=0,
+                      command=self.show_specs_page).pack()
                       
+        ctk.CTkLabel(pnl, text="Developed by James Uzumaki", font=("Arial", 9), text_color="#52525b").pack()
+
+    def show_specs_page(self):
+        self.menu_frame.grid_remove()
+        
+        self.specs_frame = ctk.CTkFrame(self, fg_color="#101010")
+        self.specs_frame.grid(row=0, column=0, sticky="nsew")
+        self.specs_frame.grid_columnconfigure(0, weight=1)
+        
+        # Back Button
+        ctk.CTkButton(self.specs_frame, text="< Back", width=80, command=self.back_to_main).place(x=20, y=20)
+        
+        # Content
+        ctk.CTkLabel(self.specs_frame, text="SYSTEM REQUIREMENTS", font=("Impact", 32), text_color="gold").pack(pady=(50, 30))
+        
+        msg = ("MINIMUM REQUIREMENTS:\n\n"
+               "- GPU: NVIDIA GTX 1050 or equivalent\n"
+               "- CPU: Intel Core i5 8th Gen / Ryzen 5 2600\n"
+               "- RAM: 8GB\n"
+               "- Camera: 720p 30fps Webcam\n"
+               "\n"
+               "RECOMMENDED:\n\n"
+               "- GPU: RTX 2060 or better (for smooth tracking)\n"
+               "- CPU: i7 10th Gen / Ryzen 7 3700X\n"
+               "- RAM: 16GB\n"
+               "- Camera: 1080p 60fps Webcam")
+               
+        ctk.CTkLabel(self.specs_frame, text=msg, font=("Arial", 18), justify="left", text_color="#DDD").pack(padx=20, pady=10)
+
+    def resize_bg(self, event):
+        if not hasattr(self, 'original_bg'): return
+        
+        # Small optimization: only resize if dimensions changed significantly to avoid lag during drag
+        if hasattr(self, 'last_bg_size'):
+            w, h = self.last_bg_size
+            if abs(w - event.width) < 50 and abs(h - event.height) < 50:
+                return
+        
+        self.last_bg_size = (event.width, event.height)
+        
+        try:
+            from PIL import ImageOps
+            # Scale and Crop to fill the new window size
+            new_bg = ImageOps.fit(self.original_bg, (event.width, event.height), method=Image.Resampling.LANCZOS)
+            self.bg_photo = ctk.CTkImage(new_bg, size=(event.width, event.height))
+            self.bg_label.configure(image=self.bg_photo)
+        except Exception:
+            pass
+
     def on_camera_select(self, choice):
         if choice in self.camera_map:
             self.selected_camera_index = self.camera_map[choice]
@@ -281,6 +396,8 @@ class LauncherApp(ctk.CTk):
             self.practice_frame.grid_remove()
         if hasattr(self, 'leaderboard_frame'):
             self.leaderboard_frame.grid_remove()
+        if hasattr(self, 'specs_frame'):
+            self.specs_frame.grid_remove()
         self.menu_frame.grid()
         
     def start_game_with_user(self, mode):

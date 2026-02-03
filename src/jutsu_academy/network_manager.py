@@ -195,3 +195,15 @@ class NetworkManager:
             print(f"[+] Score submitted: {score_time}s by {username}")
         except Exception as e:
             print(f"[!] Score submission failed: {e}")
+
+if __name__ == "__main__":
+    nm = NetworkManager()
+    print(f"URL: {nm.url}")
+    print(f"Key Found: {'Yes' if nm.key else 'No'}")
+    if nm.client:
+        print("Client created successfully.")
+        # Try fetch
+        print("Fetching leaderboard...")
+        print(nm.get_leaderboard(limit=1))
+    else:
+        print("Client failed.")
