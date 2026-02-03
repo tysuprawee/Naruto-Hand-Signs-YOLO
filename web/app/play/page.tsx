@@ -100,8 +100,8 @@ export default function PlayPage() {
         const start = performance.now();
 
         // 1. Prepare Input
-        const w = 320; // Reduced from 640 for speed
-        const h = 320;
+        const w = 640;
+        const h = 640;
 
         const ctx = canvasRef.current.getContext("2d");
         if (!ctx) return;
@@ -297,8 +297,8 @@ export default function PlayPage() {
 
                 <canvas
                     ref={canvasRef}
-                    width={320}
-                    height={320}
+                    width={640}
+                    height={640}
                     className="w-full h-full object-cover bg-black"
                 />
 
