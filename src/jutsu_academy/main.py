@@ -6,6 +6,10 @@ import threading
 from PIL import Image
 import numpy as np
 import webbrowser
+import requests
+import json
+from io import BytesIO
+import pygame  # Add pygame import
 
 try:
     from pygrabber.dshow_graph import FilterGraph
@@ -13,8 +17,6 @@ try:
 except ImportError:
     FilterGraph = None
 
-# Add parent directory to path to allow imports from src
-# Add parent directory to path to allow imports from src
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 from src.jutsu_academy.game_engine import GameSession, NetworkManager
@@ -35,6 +37,29 @@ class LauncherApp(ctk.CTk):
         self.selected_camera_index = 0
         self.username = "Ninja" # Default user
         self.camera_map = {}
+        
+        self.load_session() # Load persistent login
+
+        # --- AUDIO ---
+        self.music_volume = 0.35
+        self.is_muted = False
+        self.try_play_music()
+
+    def try_play_music(self):
+        try:
+            pygame.mixer.init()
+            music_path = os.path.join("src", "sounds", "music2.mp3")
+            if os.path.exists(music_path):
+                pygame.mixer.music.load(music_path)
+                pygame.mixer.music.set_volume(self.music_volume)
+                pygame.mixer.music.play(-1, fade_ms=2000)
+                print("[+] Music started")
+            else:
+                print(f"[!] Music file not found: {music_path}")
+        except Exception as e:
+            print(f"[!] Audio Init Failed: {e}")
+
+    # --- LAYOUT MANAGEMENT ---
 
         # --- LAYOUT MANAGEMENT ---
         self.grid_rowconfigure(0, weight=1)
@@ -55,26 +80,34 @@ class LauncherApp(ctk.CTk):
         self.game_label = ctk.CTkLabel(self.game_frame, text="")
         self.game_label.pack(expand=True, fill="both")
         
-        # Overlay Button to Exit Game
-        self.btn_exit_game = ctk.CTkButton(
-            self.game_frame, 
-            text="EXIT TO MENU", 
-            command=self.stop_game,
-            fg_color="red", 
-            width=120, height=30
-        )
-        self.btn_exit_game.place(x=20, y=20)
+        # Overlay        button_bg = "#333" # Default dark
         
-        # In-Game Camera Dropdown
-        self.ingame_camera_dropdown = ctk.CTkOptionMenu(
+        # --- UI OVERLAY ---
+        # Exit (Top Left)
+        self.btn_exit = ctk.CTkButton(
             self.game_frame,
-            values=["Camera..."],
-            width=200,
-            command=self.on_ingame_camera_select,
-            fg_color="#404040",
-            button_color="#505050"
+            text="EXIT TO MENU",
+            font=("Arial", 12, "bold"),
+            fg_color="#D32F2F",
+            hover_color="#b91c1c",
+            width=120, height=35,
+            corner_radius=0, # Square to avoid black corners
+            command=self.stop_game
         )
-        self.ingame_camera_dropdown.place(x=150, y=20)
+        self.btn_exit.place(x=20, y=20)
+        
+        # Settings (Top Left, next to Exit)
+        self.btn_ingame_settings = ctk.CTkButton(
+            self.game_frame,
+            text="SETTINGS",
+            font=("Arial", 12, "bold"),
+            fg_color="#333",
+            hover_color="#555",
+            width=100, height=35,
+            corner_radius=0, # Square
+            command=self.show_settings_menu
+        )
+        self.btn_ingame_settings.place(x=150, y=20)
         
         # --- GAME CONTROLS OVERLAY ---
         # Jutsu Name
@@ -83,8 +116,8 @@ class LauncherApp(ctk.CTk):
             text="",
             font=("Impact", 24),
             text_color="#00EE00",
-            fg_color="#202020",
-            corner_radius=10,
+            fg_color="#202020", # Keep this or make transparent if possible? Transparent implies parent color (black).
+            corner_radius=0, # Square
             width=200, height=40
         )
         self.lbl_jutsu_name.place(relx=0.5, y=40, anchor="center")
@@ -95,7 +128,7 @@ class LauncherApp(ctk.CTk):
             text="<",
             font=("Arial", 20, "bold"),
             width=50, height=50,
-            corner_radius=25,
+            corner_radius=0, # Square
             fg_color="#404040",
             hover_color="#606060",
             command=self.prev_jutsu
@@ -107,7 +140,7 @@ class LauncherApp(ctk.CTk):
             text=">",
             font=("Arial", 20, "bold"),
             width=50, height=50,
-            corner_radius=25,
+            corner_radius=0, # Square
             fg_color="#404040",
             hover_color="#606060",
             command=self.next_jutsu
@@ -123,19 +156,26 @@ class LauncherApp(ctk.CTk):
         self.after(0, lambda: self.update_camera_dropdown(cameras))
 
     def update_camera_dropdown(self, cameras):
+        self.available_cameras = cameras
+        
         # Update Menu Dropdown
-        self.camera_dropdown.configure(values=cameras)
+        if hasattr(self, 'camera_dropdown'):
+            self.camera_dropdown.configure(values=cameras)
+            if cameras:
+                self.camera_dropdown.set(cameras[0])
+                
         # Update In-Game Dropdown
-        self.ingame_camera_dropdown.configure(values=cameras)
+        if hasattr(self, 'ingame_camera_dropdown'):
+            self.ingame_camera_dropdown.configure(values=cameras)
+            if cameras:
+                self.ingame_camera_dropdown.set(cameras[0])
         
         if cameras:
             default = cameras[0]
-            self.camera_dropdown.set(default)
-            self.ingame_camera_dropdown.set(default)
             self.on_camera_select(default)
+        
+        self.camera_dropdown_ready = True
             
-        self.camera_dropdown.configure(state="normal")
-        self.ingame_camera_dropdown.configure(state="normal")
         
     def on_ingame_camera_select(self, choice):
         if choice in self.camera_map:
@@ -183,126 +223,230 @@ class LauncherApp(ctk.CTk):
             
         return available
 
+    # --- SESSION MANAGEMENT ---
+    def save_session(self):
+        try:
+            data = {
+                "username": self.username,
+                "discord_user": getattr(self, 'discord_user', None)
+            }
+            with open("user_session.json", "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            print(f"Failed to save session: {e}")
+
+    def load_session(self):
+        try:
+            if os.path.exists("user_session.json"):
+                with open("user_session.json", "r") as f:
+                    data = json.load(f)
+                    self.username = data.get("username", "Ninja")
+                    self.discord_user = data.get("discord_user", None)
+                    if self.discord_user:
+                        print(f"[+] Loaded session for {self.username}")
+                        # Auto-refresh profile in background
+                        threading.Thread(target=self.refresh_profile_background, daemon=True).start()
+        except Exception as e:
+            print(f"Failed to load session: {e}")
+
+    def refresh_profile_background(self):
+        if not self.discord_user or 'access_token' not in self.discord_user:
+            return
+            
+        try:
+            token = self.discord_user['access_token']
+            print("[*] Validating session token...")
+            r = requests.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {token}"}, timeout=5)
+            if r.status_code == 200:
+                new_info = r.json()
+                # Preserve token in new info
+                new_info['access_token'] = token 
+                
+                # Update State
+                self.discord_user = new_info
+                self.username = new_info['username']
+                self.save_session()
+                print(f"[+] Profile refreshed: {self.username}")
+                
+                # Refresh UI if app is running
+                self.after(0, self.refresh_auth_ui)
+            else:
+                print(f"[-] Token invalid ({r.status_code}). Please relogin.")
+        except Exception as e:
+            print(f"[!] Profile refresh failed: {e}")
+
+    def clear_session(self):
+        self.username = "Ninja"
+        self.discord_user = None
+        if os.path.exists("user_session.json"):
+            try:
+                os.remove("user_session.json")
+            except:
+                pass
+
+
     def setup_menu(self):
         # 1. Background Image Handling
         try:
             bg_path = os.path.join("src", "socials", "vl2.png")
             if os.path.exists(bg_path):
-                self.original_bg = Image.open(bg_path) # Keep original
-                
-                # Initial set to window size
+                self.original_bg = Image.open(bg_path)
                 self.bg_photo = ctk.CTkImage(self.original_bg, size=(1024, 768))
-                
                 self.bg_label = ctk.CTkLabel(self.menu_frame, image=self.bg_photo, text="")
                 self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-                
-                # Bind resize event to handle fullsceren
-                self.menu_frame.bind('<Configure>', self.resize_bg)
+                self.menu_frame.bind("<Configure>", self.resize_bg)
         except Exception as e:
             print(f"Failed to load BG: {e}")
 
-        # 2. Central Card Panel (Glass/Dark Theme)
-        # Centered using place() on top of the background (relx/rely keeps it centered even on resize)
+        # 2. Center wrapper (just for positioning)
+        self.login_outer = ctk.CTkFrame(self.menu_frame, fg_color="transparent")
+        self.login_outer.place(relx=0.5, rely=0.5, anchor="center")
+
+        # 3. Card built as TWO frames (this fixes the weird double-edge)
+        # Outer border layer
         self.center_panel = ctk.CTkFrame(
-            self.menu_frame, 
-            fg_color="#18181b", # Dark Charcoal
-            corner_radius=20, 
-            border_width=1, 
-            border_color="#333",
-            width=450 # Min width hint
+            self.login_outer,
+            fg_color="#2a2a2f",     # border color
+            corner_radius=26
         )
-        self.center_panel.place(relx=0.5, rely=0.5, anchor="center")
+        self.center_panel.pack()
 
-        # Inner Container for Padding
-        # We pack everything inside this 'pnl'
-        pnl = ctk.CTkFrame(self.center_panel, fg_color="transparent")
-        pnl.pack(padx=50, pady=40, fill="both", expand=True)
+        # Inner content layer (slightly inset)
+        inner = ctk.CTkFrame(
+            self.center_panel,
+            fg_color="#18181b",     # actual card background
+            corner_radius=24
+        )
+        inner.pack(padx=2, pady=2)  # thickness of the "border"
 
-        # --- HEADER (Logo & Subtitle) ---
-        title_frame = ctk.CTkFrame(pnl, fg_color="transparent")
-        title_frame.pack(pady=(0, 5))
-        
-        # Dual Color Title
-        ctk.CTkLabel(title_frame, text="JUTSU", font=("Impact", 42), text_color="#f59e0b").pack(side="left")
-        ctk.CTkLabel(title_frame, text=" ACADEMY", font=("Impact", 42), text_color="#f4f4f5").pack(side="left")
-        
+        # Inner container with padding away from the rounded edges
+        pnl = ctk.CTkFrame(inner, fg_color="transparent")
+        pnl.pack(padx=40, pady=35, fill="both", expand=True)
+
+        # Title
+        try:
+            pil_img = Image.open("src/pics/logo.png")
+            # Calculate aspect ratio to fit width=380, max height=100
+            w, h = pil_img.size
+            aspect = w / h
+            target_w = 380
+            target_h = int(target_w / aspect)
+            if target_h > 120:
+                target_h = 120
+                target_w = int(target_h * aspect)
+                
+            logo_img = ctk.CTkImage(pil_img, size=(target_w, target_h))
+            ctk.CTkLabel(pnl, text="", image=logo_img).pack(pady=(0, 5))
+        except:
+            title_frame = ctk.CTkFrame(pnl, fg_color="transparent")
+            title_frame.pack(pady=(0, 5))
+            ctk.CTkLabel(title_frame, text="JUTSU", font=("Impact", 42), text_color="#f59e0b").pack(side="left")
+            ctk.CTkLabel(title_frame, text=" ACADEMY", font=("Impact", 42), text_color="#f4f4f5").pack(side="left")
         ctk.CTkLabel(pnl, text="TRAIN • MASTER • RANK UP", font=("Arial", 11, "bold"), text_color="#71717a").pack(pady=(0, 35))
 
-        # --- CAMERA SELECTION ---
-        cam_row = ctk.CTkFrame(pnl, fg_color="transparent")
-        cam_row.pack(pady=(0, 25))
-        
-        ctk.CTkLabel(cam_row, text="CAMERA", font=("Arial", 12, "bold"), text_color="#a1a1aa").pack(side="left", padx=(0, 15))
-        
-        self.camera_dropdown = ctk.CTkOptionMenu(
-            cam_row, 
-            values=["Scanning..."], 
-            width=220,
-            command=self.on_camera_select,
-            fg_color="#27272a", 
-            button_color="#3f3f46", 
-            button_hover_color="#52525b",
-            text_color="white",
-            dropdown_fg_color="#27272a"
+        # --- AUTH SECTION ---
+        self.auth_frame = ctk.CTkFrame(
+            pnl,
+            fg_color="#27272a",
+            corner_radius=14
         )
-        self.camera_dropdown.pack(side="left")
-        self.camera_dropdown.configure(state="disabled")
+        self.auth_frame.pack(pady=(0, 20), fill="x", ipady=10)
 
-        # --- MAIN ACTIONS ---
-        btn_font = ("Arial", 14, "bold")
-        
-        # Primary: Singleplayer (Orange)
-        ctk.CTkButton(pnl, text="SINGLEPLAYER", font=btn_font, height=50, corner_radius=12,
-                      fg_color="#f59e0b", hover_color="#d97706", text_color="black",
-                      command=self.launch_practice).pack(fill="x", pady=8)
+        self.refresh_auth_ui()
 
-        # Secondary: Multiplayer (Locked/Dark)
-        ctk.CTkButton(pnl, text="MULTIPLAYER (LOCKED)", font=btn_font, height=50, corner_radius=12,
-                      fg_color="#27272a", hover_color="#27272a", text_color="#52525b", 
-                      state="disabled").pack(fill="x", pady=8)
+        # --- ENTER ACTION ---
+        ctk.CTkButton(
+            pnl,
+            text="ENTER ACADEMY",
+            font=("Arial", 16, "bold"),
+            height=55,
+            corner_radius=10,
+            fg_color="#f59e0b",
+            hover_color="#d97706",
+            text_color="black",
+            command=self.show_practice_menu
+        ).pack(fill="x", pady=10)
 
-        # Tertiary: Hall of Fame (Blue)
-        ctk.CTkButton(pnl, text="HALL OF FAME", font=btn_font, height=50, corner_radius=12,
-                      fg_color="#0ea5e9", hover_color="#0284c7", text_color="white",
-                      command=self.show_leaderboard).pack(fill="x", pady=8)
+        # --- MUTE BUTTON (Top Right) ---
+        try:
+            self.icon_unmute = ctk.CTkImage(Image.open("src/pics/unmute.png"), size=(24, 24))
+            self.icon_mute = ctk.CTkImage(Image.open("src/pics/mute.png"), size=(24, 24))
+        except:
+             self.icon_unmute = None
+             self.icon_mute = None
 
-        # Exit: Ghost/Outline
-        ctk.CTkButton(pnl, text="EXIT", font=btn_font, height=45, corner_radius=12,
-                      fg_color="transparent", border_width=2, border_color="#3f3f46", 
-                      text_color="#d4d4d8", hover_color="#27272a",
-                      command=self.destroy).pack(fill="x", pady=(25, 15))
+        self.btn_mute = ctk.CTkButton(
+            self.menu_frame,
+            text="" if self.icon_unmute else "🔊",
+            image=self.icon_unmute,
+            width=40, height=40,
+            font=("Arial", 20),
+            fg_color="#333",
+            hover_color="#555",
+            command=self.toggle_mute
+        )
+        self.btn_mute.place(relx=0.95, rely=0.05, anchor="ne")
 
-        # --- FOOTER ---
-        # Social Icons Row
+
+        # Social Icons
         social_frame = ctk.CTkFrame(pnl, fg_color="transparent")
         social_frame.pack(pady=(0, 10))
-        
+
         def load_icon(filename):
             try:
                 path = os.path.join("src", "socials", filename)
                 img = Image.open(path)
                 return ctk.CTkImage(img, size=(24, 24))
-            except:
+            except Exception:
                 return None
 
-        # Helper for social buttons
         def social_btn(img, link):
             if img:
-                ctk.CTkButton(social_frame, text="", image=img, width=32, height=32, 
-                              fg_color="transparent", hover_color="#27272a", corner_radius=8,
-                              command=lambda: webbrowser.open(link)).pack(side="left", padx=5)
+                ctk.CTkButton(
+                    social_frame,
+                    text="",
+                    image=img,
+                    width=32,
+                    height=32,
+                    fg_color="transparent",
+                    hover_color="#27272a",
+                    corner_radius=8,
+                    command=lambda: webbrowser.open(link)
+                ).pack(side="left", padx=5)
 
-        social_btn(load_icon("Instagram_logo_2016.svg.png"), "https://www.instagram.com/james.uzumaki_/")
-        social_btn(load_icon("YouTube_full-color_icon_(2017).svg.webp"), "https://www.youtube.com/@James_Uzumaki")
-        social_btn(load_icon("discord-logo-discord-icon-transparent-free-png.png"), "https://discord.gg/7xBQ22SnN2")
-        
+        social_btn(load_icon("ig.png"), "https://www.instagram.com/james.uzumaki_/")
+        social_btn(load_icon("yt.png"), "https://www.youtube.com/@James_Uzumaki")
+        social_btn(load_icon("discord.png"), "https://discord.gg/7xBQ22SnN2")
+
         # Meta Links
-        ctk.CTkButton(pnl, text="About Jutsu Academy", font=("Arial", 11), 
-                      fg_color="transparent", text_color="#71717a", hover_color="#27272a", 
-                      height=20, width=0,
-                      command=self.show_specs_page).pack()
-                      
+        ctk.CTkButton(
+            pnl,
+            text="About Jutsu Academy",
+            font=("Arial", 11),
+            fg_color="transparent",
+            text_color="#71717a",
+            hover_color="#27272a",
+            height=20,
+            width=0,
+            command=self.show_specs_page
+        ).pack()
+
         ctk.CTkLabel(pnl, text="Developed by James Uzumaki", font=("Arial", 9), text_color="#52525b").pack()
+
+
+
+    def toggle_mute(self):
+        self.is_muted = not self.is_muted
+        if self.is_muted:
+            pygame.mixer.music.set_volume(0)
+            if hasattr(self, 'btn_mute'):
+                 if self.icon_mute: self.btn_mute.configure(image=self.icon_mute)
+                 else: self.btn_mute.configure(text="🔇", fg_color="#550000")
+        else:
+            pygame.mixer.music.set_volume(self.music_volume)
+            if hasattr(self, 'btn_mute'):
+                 if self.icon_unmute: self.btn_mute.configure(image=self.icon_unmute)
+                 else: self.btn_mute.configure(text="🔊", fg_color="#333")
 
     def show_specs_page(self):
         self.menu_frame.grid_remove()
@@ -330,6 +474,35 @@ class LauncherApp(ctk.CTk):
                "- Camera: 1080p 60fps Webcam")
                
         ctk.CTkLabel(self.specs_frame, text=msg, font=("Arial", 18), justify="left", text_color="#DDD").pack(padx=20, pady=10)
+
+    def refresh_auth_ui(self):
+        # Clear existing
+        if hasattr(self, 'auth_frame'):
+            for w in self.auth_frame.winfo_children(): w.destroy()
+            
+            if getattr(self, 'discord_user', None):
+                # Logged In
+                try:
+                    avatar_url = f"https://cdn.discordapp.com/avatars/{self.discord_user['id']}/{self.discord_user['avatar']}.png"
+                    response = requests.get(avatar_url, timeout=2)
+                    pil_img = Image.open(BytesIO(response.content))
+                    avatar_ctk = ctk.CTkImage(pil_img, size=(40, 40))
+                    ctk.CTkLabel(self.auth_frame, text="", image=avatar_ctk).pack(side="left", padx=15)
+                except:
+                    ctk.CTkLabel(self.auth_frame, text="👤", font=("Arial", 24)).pack(side="left", padx=15)
+                    
+                ctk.CTkLabel(self.auth_frame, text=self.username, font=("Arial", 18, "bold"), text_color="white").pack(side="left", fill="x", expand=True)
+                ctk.CTkButton(self.auth_frame, text="LOGOUT", width=60, height=25, fg_color="#ef4444", hover_color="#dc2626", 
+                              command=self.logout_discord).pack(side="right", padx=10)
+            else:
+                # Guest
+                ctk.CTkLabel(self.auth_frame, text="Guest", font=("Arial", 18, "bold"), text_color="gray").pack(side="left", padx=15)
+                ctk.CTkButton(self.auth_frame, text="LOGIN WITH DISCORD", font=("Arial", 12, "bold"), height=30,
+                              fg_color="#5865F2", hover_color="#4752C4",
+                              command=self.handle_discord_login).pack(side="right", padx=10)
+
+    def scan_cameras_async(self):
+         threading.Thread(target=self.get_available_cameras, daemon=True).start()
 
     def resize_bg(self, event):
         if not hasattr(self, 'original_bg'): return
@@ -363,33 +536,179 @@ class LauncherApp(ctk.CTk):
         self.show_practice_menu()
         
     def show_practice_menu(self):
-        self.menu_frame.grid_remove()
+        # Hide LOGIN card, keep BG
+        if hasattr(self, 'login_outer'):
+             self.login_outer.place_forget()
         
-        # Create Practice Menu Frame
-        self.practice_frame = ctk.CTkFrame(self, fg_color="#101010")
-        self.practice_frame.grid(row=0, column=0, sticky="nsew")
-        self.practice_frame.grid_columnconfigure(0, weight=1)
+        # Create Practice Card Wrapper
+        self.practice_outer = ctk.CTkFrame(self.menu_frame, fg_color="transparent")
+        self.practice_outer.place(relx=0.5, rely=0.5, anchor="center")
         
-        # Back Button
-        ctk.CTkButton(self.practice_frame, text="< Back", width=80, command=self.back_to_main).place(x=20, y=20)
+        # Card Border & Body (Reusing the style)
+        self.practice_border = ctk.CTkFrame(self.practice_outer, fg_color="#2a2a2f", corner_radius=26)
+        self.practice_border.pack()
         
+        self.practice_inner = ctk.CTkFrame(self.practice_border, fg_color="#18181b", corner_radius=24)
+        self.practice_inner.pack(padx=2, pady=2)
+        
+        # Content Padding
+        pnl = ctk.CTkFrame(self.practice_inner, fg_color="transparent")
+        pnl.pack(padx=50, pady=40, fill="both", expand=True)
+
         # Title
-        ctk.CTkLabel(self.practice_frame, text="PRACTICE MODE", font=("Impact", 48), text_color="#00EE00").pack(pady=(50, 20))
+        ctk.CTkLabel(pnl, text="SELECT GAME MODE", font=("Impact", 42), text_color="#00EE00").pack(pady=(0, 30))
+
+        # --- MODES ---
+        btn_font = ("Arial", 20, "bold")
         
-        # Username Input
-        ctk.CTkLabel(self.practice_frame, text="NINJA NAME:", font=("Arial", 14), text_color="gray").pack(pady=(0,5))
-        self.entry_username = ctk.CTkEntry(self.practice_frame, width=200, justify="center")
-        self.entry_username.pack(pady=(0, 20))
-        self.entry_username.insert(0, "Ninja")
-        
-        # Buttons
-        ctk.CTkButton(self.practice_frame, text="FREE PLAY", font=("Arial", 20, "bold"), width=300, height=50,
+        # Free Play
+        ctk.CTkButton(pnl, text="FREE PLAY", font=btn_font, width=300, height=60,
                       fg_color="#444", hover_color="#666",
                       command=lambda: self.start_game_with_user("practice")).pack(pady=10)
                       
-        ctk.CTkButton(self.practice_frame, text="TIME ATTACK (Leaderboard)", font=("Arial", 20, "bold"), width=300, height=50,
+        # Competitive
+        ctk.CTkButton(pnl, text="COMPETITIVE", font=btn_font, width=300, height=60,
                       fg_color="#D32F2F", hover_color="#B71C1C",
                       command=lambda: self.start_game_with_user("challenge")).pack(pady=10)
+
+        # Multiplayer
+        ctk.CTkButton(pnl, text="MULTIPLAYER (Locked)", font=btn_font, width=300, height=60,
+                      fg_color="#222", text_color="#555",
+                      state="disabled").pack(pady=10)
+        
+        # Settings
+        ctk.CTkButton(pnl, text="SETTINGS", font=btn_font, width=300, height=60,
+                      fg_color="#333", hover_color="#555",
+                      command=self.show_settings_menu).pack(pady=10)
+
+        # Leaderboard with Back Link
+        link_frame = ctk.CTkFrame(pnl, fg_color="transparent")
+        link_frame.pack(pady=20)
+        
+        ctk.CTkButton(link_frame, text="< Back", font=("Arial", 14), 
+                      fg_color="transparent", text_color="gray", hover_color="#222", width=60,
+                      command=self.back_to_main_from_practice).pack(side="left", padx=20)
+                      
+        ctk.CTkButton(link_frame, text="View Leaderboards", font=("Arial", 14), 
+                      fg_color="transparent", text_color="gold", hover_color="#222", width=120,
+                      command=self.show_leaderboard).pack(side="left", padx=20)
+
+    def back_to_main_from_practice(self):
+        if hasattr(self, 'practice_outer'):
+            self.practice_outer.destroy()
+        # Restore Login Card
+        if hasattr(self, 'login_outer'):
+            self.login_outer.place(relx=0.5, rely=0.5, anchor="center")
+
+    def show_settings_menu(self):
+        if self.is_game_active:
+             self.game_frame.grid_remove()
+        else:
+             if hasattr(self, 'practice_outer'):
+                 self.practice_outer.place_forget()
+             
+        self.settings_frame = ctk.CTkFrame(self, fg_color="#101010")
+        self.settings_frame.grid(row=0, column=0, sticky="nsew")
+        self.settings_frame.grid_columnconfigure(0, weight=1)
+        
+        # Back
+        ctk.CTkButton(self.settings_frame, text="< Back", width=80, 
+                      command=self.close_settings_menu).place(x=20, y=20)
+        
+        ctk.CTkLabel(self.settings_frame, text="SETTINGS", font=("Impact", 42), text_color="white").pack(pady=(60, 30))
+        
+        # --- CAMERA ---
+        ctk.CTkLabel(self.settings_frame, text="ACTIVE CAMERA", font=("Arial", 16, "bold")).pack(pady=(0, 10))
+        self.camera_dropdown = ctk.CTkOptionMenu(
+            self.settings_frame, 
+            values=getattr(self, 'available_cameras', ["Scanning..."]),
+            width=300,
+            command=self.on_camera_select,
+            fg_color="#333", button_color="#555"
+        )
+        self.camera_dropdown.pack(pady=(0, 40))
+        # Set current
+        current_cam = None
+        for name, idx in self.camera_map.items():
+            if idx == self.selected_camera_index:
+                current_cam = name; break
+        if current_cam: self.camera_dropdown.set(current_cam)
+
+        # Music
+        ctk.CTkLabel(self.settings_frame, text="MUSIC VOLUME", font=("Arial", 16, "bold")).pack(pady=(0, 10))
+        mus_slider = ctk.CTkSlider(self.settings_frame, from_=0, to=1, number_of_steps=100, width=400, command=self.updated_music_vol)
+        mus_slider.set(self.music_volume)
+        mus_slider.pack(pady=(0, 40))
+        
+        # SFX
+        ctk.CTkLabel(self.settings_frame, text="SFX VOLUME", font=("Arial", 16, "bold")).pack(pady=(0, 10))
+        sfx_slider = ctk.CTkSlider(self.settings_frame, from_=0, to=1, number_of_steps=100, width=400, command=self.updated_sfx_vol)
+        sfx_slider.set(getattr(self, 'sfx_volume', 0.5))
+        sfx_slider.pack(pady=(0, 40))
+
+    def close_settings_menu(self):
+        self.settings_frame.destroy()
+        if self.is_game_active:
+            self.game_frame.grid()
+        else:
+            if hasattr(self, 'practice_outer'):
+                self.practice_outer.place(relx=0.5, rely=0.5, anchor="center")
+
+    def updated_music_vol(self, val):
+        self.music_volume = val
+        try: pygame.mixer.music.set_volume(val)
+        except: pass
+
+    def updated_sfx_vol(self, val):
+        self.sfx_volume = val
+
+    def handle_discord_login(self):
+        # We need credentials. For now, try to load from env or prompt user?
+        # Since this is a local app, putting secrets in code is bad practice if distributed, 
+        # but for a personal project generated by AI, we can check .env or ask.
+        
+        env = {}
+        try:
+            # Quick parse of .env.local if available
+            with open(os.path.join("web", ".env.local"), "r") as f:
+                for line in f:
+                    if "=" in line:
+                        k, v = line.strip().split("=", 1)
+                        env[k] = v.strip()
+        except:
+            pass
+            
+        client_id = env.get("DISCORD_CLIENT_ID")
+        client_secret = env.get("DISCORD_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            print("[!] Missing Discord Credentials in web/.env.local")
+            # For demo purposes, we can't proceed without them.
+            ctk.CTkLabel(self.practice_frame, text="Missing API Keys!", text_color="red").pack()
+            return
+
+        from src.jutsu_academy.discord_auth import DiscordLogin
+        auth = DiscordLogin(client_id, client_secret)
+        
+        # Run in thread to not freeze UI? 
+        # But we need to open browser. threading is handled inside DiscordLogin for the server.
+        # But the `login()` call blocks waiting for the event. So yes, run in thread.
+        
+        def run_auth():
+            user = auth.login()
+            if user:
+                self.discord_user = user
+                self.username = user['username']
+                self.save_session() # Persist
+                print(f"Logged in as {self.username}")
+                # Update UI (Needs to be on main thread? Tkinter isn't thread safe)
+                self.after(100, self.refresh_auth_ui)
+        
+        threading.Thread(target=run_auth, daemon=True).start()
+
+    def logout_discord(self):
+        self.clear_session()
+        self.refresh_auth_ui()
 
     def back_to_main(self):
         if hasattr(self, 'practice_frame'):
@@ -401,9 +720,10 @@ class LauncherApp(ctk.CTk):
         self.menu_frame.grid()
         
     def start_game_with_user(self, mode):
-        username = self.entry_username.get()
-        if not username.strip(): username = "Ninja"
-        self.username = username # Save globally if needed
+        # Use current state (set by Login or Default)
+        if not self.username or self.username == "Ninja":
+             self.username = "Guest"
+             
         self.start_game(mode=mode, room_id=None)
 
     def show_leaderboard(self):
@@ -437,14 +757,16 @@ class LauncherApp(ctk.CTk):
         
         # Use grid for header for alignment
         header.grid_columnconfigure(0, weight=1) # Rank
-        header.grid_columnconfigure(1, weight=2) # Name
-        header.grid_columnconfigure(2, weight=1) # Time
-        header.grid_columnconfigure(3, weight=1) # Title
+        header.grid_columnconfigure(1, weight=0) # Avatar
+        header.grid_columnconfigure(2, weight=2) # Name
+        header.grid_columnconfigure(3, weight=1) # Time
+        header.grid_columnconfigure(4, weight=1) # Title
         
         ctk.CTkLabel(header, text="RANK", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=0, pady=10)
-        ctk.CTkLabel(header, text="NINJA", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=1, pady=10)
-        ctk.CTkLabel(header, text="TIME", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=2, pady=10)
-        ctk.CTkLabel(header, text="TITLE", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=3, pady=10)
+        ctk.CTkLabel(header, text="", width=40).grid(row=0, column=1, pady=10) # Avatar
+        ctk.CTkLabel(header, text="NINJA", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=2, pady=10, sticky="w")
+        ctk.CTkLabel(header, text="TIME", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=3, pady=10)
+        ctk.CTkLabel(header, text="TITLE", font=("Arial", 14, "bold"), text_color="white").grid(row=0, column=4, pady=10)
 
         # Scrollable Area
         self.scroll_ranks = ctk.CTkScrollableFrame(self.leaderboard_frame, width=700, height=450, fg_color="transparent")
@@ -458,9 +780,22 @@ class LauncherApp(ctk.CTk):
         for widget in self.scroll_ranks.winfo_children():
             widget.destroy()
             
-        nm = NetworkManager()
-        rows = nm.get_leaderboard(limit=50, mode=jutsu_name)
+        # Loading Indicator
+        self.loading_lbl = ctk.CTkLabel(self.scroll_ranks, text="Loading Rankings...", font=("Arial", 16), text_color="gray")
+        self.loading_lbl.pack(pady=50)
         
+        def fetch_thread():
+            nm = NetworkManager()
+            rows = nm.get_leaderboard(limit=50, mode=jutsu_name.upper())
+            self.after(0, lambda: self.render_leaderboard_rows(rows))
+            
+        threading.Thread(target=fetch_thread, daemon=True).start()
+
+    def render_leaderboard_rows(self, rows):
+        # Remove Loading
+        if hasattr(self, 'loading_lbl'):
+             self.loading_lbl.destroy()
+             
         if not rows:
             ctk.CTkLabel(self.scroll_ranks, text="No records yet. Be the first!", font=("Arial", 16), text_color="gray").pack(pady=50)
             return
@@ -489,15 +824,45 @@ class LauncherApp(ctk.CTk):
             r_frame = ctk.CTkFrame(self.scroll_ranks, fg_color=bg_color, corner_radius=10)
             r_frame.pack(fill="x", pady=2)
             
-            r_frame.grid_columnconfigure(0, weight=1)
-            r_frame.grid_columnconfigure(1, weight=2)
-            r_frame.grid_columnconfigure(2, weight=1)
-            r_frame.grid_columnconfigure(3, weight=1)
+            r_frame.grid_columnconfigure(0, weight=1) # Rank
+            r_frame.grid_columnconfigure(1, weight=0) # Avatar
+            r_frame.grid_columnconfigure(2, weight=2) # Name
+            r_frame.grid_columnconfigure(3, weight=1) # Time
+            r_frame.grid_columnconfigure(4, weight=1) # Title
             
+            # Default Avatar logic
+            # Avatar Logic
+            avatar_img = None
+            try:
+                # 1. Try DB Avatar
+                avatar_url = row.get('avatar_url')
+                if avatar_url:
+                     response = requests.get(avatar_url, timeout=2)
+                     if response.status_code == 200:
+                         img_data = BytesIO(response.content)
+                         pil_img = Image.open(img_data)
+                         avatar_img = ctk.CTkImage(pil_img, size=(30, 30))
+                
+                # 2. Fallback to Shadow
+                if not avatar_img:
+                    shadow_path = os.path.join("src", "pics", "shadow.jpg")
+                    if os.path.exists(shadow_path):
+                         pil_img = Image.open(shadow_path)
+                         avatar_img = ctk.CTkImage(pil_img, size=(30, 30))
+            except Exception as e:
+                print(f"Avatar load error: {e}")
+                avatar_img = None
+
             ctk.CTkLabel(r_frame, text=f"#{rank}", font=("Impact", 18), text_color=color).grid(row=0, column=0, pady=10)
-            ctk.CTkLabel(r_frame, text=row['username'], font=("Arial", 16, "bold"), text_color="white").grid(row=0, column=1, pady=10)
-            ctk.CTkLabel(r_frame, text=f"{row['score_time']:.2f}s", font=("Arial", 16), text_color=color).grid(row=0, column=2, pady=10)
-            ctk.CTkLabel(r_frame, text=title, font=("Arial", 12, "bold"), text_color=color).grid(row=0, column=3, pady=10)
+            
+            if avatar_img:
+                 ctk.CTkLabel(r_frame, text="", image=avatar_img).grid(row=0, column=1, pady=10, padx=(0,5))
+            else:
+                 ctk.CTkLabel(r_frame, text="👤").grid(row=0, column=1, pady=10)
+
+            ctk.CTkLabel(r_frame, text=row['username'], font=("Arial", 16, "bold"), text_color="white").grid(row=0, column=2, pady=10, sticky="w")
+            ctk.CTkLabel(r_frame, text=f"{row['score_time']:.2f}s", font=("Arial", 16), text_color=color).grid(row=0, column=3, pady=10)
+            ctk.CTkLabel(r_frame, text=title, font=("Arial", 12, "bold"), text_color=color).grid(row=0, column=4, pady=10)
 
     def back_to_practice(self):
         # Obsolete, redirect to main instead if called
@@ -545,7 +910,13 @@ class LauncherApp(ctk.CTk):
             # but we can try to update text before specific slow parts if we split them.
             # For now, just show that something is happening.
             
-            self.current_session = GameSession(mode=mode, room_id=room_id, camera_index=self.selected_camera_index, username=self.username)
+            self.current_session = GameSession(
+                mode=mode, 
+                room_id=room_id, 
+                camera_index=self.selected_camera_index, 
+                username=self.username,
+                discord_user=getattr(self, 'discord_user', None)
+            )
             
             self.lbl_status_load.configure(text="Connecting to Server...")
             # Initialization Done -> Switch to Game UI on Main Thread
@@ -556,7 +927,18 @@ class LauncherApp(ctk.CTk):
             
     def handle_space_bar(self, event):
         if self.current_session and self.is_game_active:
-            self.current_session.start_challenge()
+            if self.current_session.game_finished:
+                 # Restart Challenge
+                 mode = self.current_session.mode
+                 self.stop_game()
+                 # Short delay to allow cleanup? Actually stop_game is sync.
+                 # But start_game_with_user starts a thread. It should be fine.
+                 self.start_game_with_user(mode)
+            else:
+                self.current_session.start_challenge()
+
+    def handle_esc(self, event):
+        self.stop_game()
             
     def prev_jutsu(self):
         if self.current_session and self.is_game_active:
@@ -575,18 +957,26 @@ class LauncherApp(ctk.CTk):
 
     def _finalize_start_game(self):
         # Hide Loading, Show Game
-        self.loading_frame.grid_remove()
-        self.game_frame.grid()
+        if hasattr(self, 'loading_frame'):
+            self.loading_frame.grid_remove()
+            
+        self.game_frame.grid(row=0, column=0, sticky="nsew") # Explicit grid options
         self.game_frame.tkraise() # Ensure top z-order
         
         self.is_game_active = True
         self.update_jutsu_label() # Init label
         
         # Bind Keys
+        # Bind Keys
         self.bind('<space>', self.handle_space_bar)
+        self.bind('<Escape>', self.handle_esc)
         
         # Force Layout Update (Fixes "freeze until move" bug)
         self.update_idletasks()
+        
+        # Super-force geometry refresh
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"{w}x{h}")
         self.update()
         
         self.update_game_loop()

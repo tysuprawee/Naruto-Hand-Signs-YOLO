@@ -7,7 +7,7 @@ import numpy as np
 import threading
 
 class GameSession(FireballJutsuTrainer):
-    def __init__(self, mode="practice", room_id=None, camera_index=0, username="Ninja", parent_app=None):
+    def __init__(self, mode="practice", room_id=None, camera_index=0, username="Ninja", parent_app=None, discord_user=None):
         # Auto-find weights
         weights = get_latest_weights()
         if not weights:
@@ -20,9 +20,15 @@ class GameSession(FireballJutsuTrainer):
         self.camera_index = camera_index # Track current camera
         self.username = username
         self.parent_app = parent_app
+        self.discord_user = discord_user
+        
+        # Apply SFX Volume
+        if self.parent_app and hasattr(self.parent_app, 'sfx_volume'):
+             self.set_sfx_volume(self.parent_app.sfx_volume)
         
         # Challenge Mode State
         self.waiting_for_start = True
+        self.countdown_start_time = None
         self.start_time = None
         self.game_finished = False
         self.final_time = 0.0
@@ -71,29 +77,55 @@ class GameSession(FireballJutsuTrainer):
 
         if self.mode == "challenge":
             if self.waiting_for_start:
-                # Dim background slightly
-                overlay = frame.copy()
-                cv2.rectangle(overlay, (0, 0), (cam_w, cam_h), (0,0,0), -1)
-                frame = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
-                
-                # Draw Text
-                text = "PRESS [SPACE] TO START"
-                font_scale = 1.5
-                thickness = 3
-                (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-                x = (cam_w - w) // 2
-                y = (cam_h + h) // 2
-                
-                # Shadow
-                cv2.putText(frame, text, (x+2, y+2), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0,0,0), thickness)
-                # Text
-                cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), thickness)
-                
-                # Don't update timer or detect hands yet
-                should_detect = False
-                
+                # Check if countdown started
+                if hasattr(self, 'countdown_start_time') and self.countdown_start_time:
+                    elapsed = time.time() - self.countdown_start_time
+                    remaining = 3 - int(elapsed)
+                    
+                    if remaining > 0:
+                        # Draw Countdown
+                        overlay = frame.copy()
+                        cv2.rectangle(overlay, (0, 0), (cam_w, cam_h), (0,0,0), -1)
+                        # Specific alpha for countdown
+                        frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
+                        
+                        text = str(remaining)
+                        (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 10, 20)
+                        x = (cam_w - w) // 2
+                        y = (cam_h + h) // 2
+                        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 10, (0, 255, 255), 20)
+                        return frame
+                    else:
+                        # GO!
+                        self.waiting_for_start = False
+                        self.start_time = time.time()
+                        self.last_sign_time = time.time()
+                        self.countdown_start_time = None
+                        self.play_sound("each")
+                        
+                else:
+                    # Waiting for SPACE
+                    # Dim background slightly
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (0, 0), (cam_w, cam_h), (0,0,0), -1)
+                    frame = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
+                    
+                    # Draw Text
+                    text = "PRESS [SPACE] TO START"
+                    font_scale = 1.0
+                    thickness = 2
+                    (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+                    x = (cam_w - w) // 2
+                    y = (cam_h + h) // 2
+                    
+                    # Shadow
+                    cv2.putText(frame, text, (x+2, y+2), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0,0,0), thickness)
+                    # Text
+                    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 255), thickness)
+                    
+                    return frame # Skip detection
+                    
             elif self.start_time is None:
-                # First frame after start
                 self.start_time = time.time()
 
         # 1. Network / Game Over Check
@@ -102,8 +134,9 @@ class GameSession(FireballJutsuTrainer):
             if self.game_over:
                 return self.render_game_over()
         
-        if self.mode == "challenge" and self.game_finished:
-            return self.render_challenge_complete()
+        # if self.mode == "challenge" and self.game_finished:
+        #    # We now draw overlay at the end instead of returning early
+        #    pass
         
         # --- TURN / DETECTION LOGIC ---
         should_detect = True
@@ -134,9 +167,7 @@ class GameSession(FireballJutsuTrainer):
                         # Check Completion
                         if self.current_step >= len(self.sequence):
                             self.activate_jutsu_effect(frame)
-                            
-                            if self.mode == "challenge":
-                                self.finish_challenge()
+                            # Delayed finish calling in handle_jutsu_duration
 
         elif not should_detect and self.mode == "multiplayer":
                 cv2.putText(frame, "OPPONENT'S TURN...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
@@ -168,12 +199,16 @@ class GameSession(FireballJutsuTrainer):
         except:
            canvas = frame # Fallback
            
+        if self.mode == "challenge" and self.game_finished:
+             canvas = self.draw_challenge_result(canvas)
+
         return canvas
 
     def start_challenge(self):
-        if self.mode == "challenge" and self.waiting_for_start:
-            self.waiting_for_start = False
-            self.play_sound("each") # Sound cue
+        if self.mode == "challenge" and self.waiting_for_start and not self.countdown_start_time:
+            self.countdown_start_time = time.time()
+
+    def activate_jutsu_effect(self, frame=None):
         print("[!!!] JUTSU ACTIVATED [!!!]")
         self.jutsu_active = True
         self.jutsu_start_time = time.time()
@@ -181,7 +216,7 @@ class GameSession(FireballJutsuTrainer):
         self.play_sound("complete")
         self.signature_sound_played = False
         
-        if self.mode == "multiplayer":
+        if self.mode == "multiplayer" and frame is not None:
              self.send_attack(frame) # Send capture
 
     def finish_challenge(self):
@@ -198,14 +233,56 @@ class GameSession(FireballJutsuTrainer):
         
         # Submit Score
         if self.network:
-            threading.Thread(target=self.network.submit_score, args=(self.username, self.final_time, jutsu_name)).start()
+            d_id = None
+            avatar = None
+            if self.discord_user:
+                d_id = self.discord_user.get('id')
+                avatar_hash = self.discord_user.get('avatar')
+                if d_id and avatar_hash:
+                    avatar = f"https://cdn.discordapp.com/avatars/{d_id}/{avatar_hash}.png"
 
-    def render_challenge_complete(self):
-        img = np.zeros((630, 640, 3), dtype=np.uint8)
-        cv2.putText(img, "CHALLENGE COMPLETE!", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
-        cv2.putText(img, f"TIME: {self.final_time:.2f}s", (180, 300), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 4)
-        cv2.putText(img, "Score Submitted!", (200, 400), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
-        return img
+            def submit_and_get_rank():
+                self.network.submit_score(self.username, self.final_time, jutsu_name, discord_id=d_id, avatar_url=avatar)
+                
+                # Fetch leaderboard to calculate rank
+                rows = self.network.get_leaderboard(limit=1000, mode=jutsu_name)
+                rank = -1
+                total = len(rows)
+                for i, row in enumerate(rows):
+                    # Simple match by time (and username to break ties)
+                    # EPSILON comparison for floats 
+                    if abs(row['score_time'] - self.final_time) < 0.001 and row['username'] == self.username:
+                        rank = i + 1
+                        break
+                
+                if rank != -1:
+                    percentile = ((total - rank) / total) * 100
+                    self.rank_info = f"Rank: #{rank} (Better than {percentile:.1f}%)"
+                else:
+                    self.rank_info = "Rank: Unranked"
+
+            threading.Thread(target=submit_and_get_rank).start()
+
+    def draw_challenge_result(self, frame):
+        # Semi-transparent overlay
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (50, 50), (590, 430), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        
+        # Text
+        cv2.putText(frame, "CHALLENGE COMPLETE!", (70, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+        cv2.putText(frame, f"TIME: {self.final_time:.2f}s", (140, 180), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
+        
+        # Rank Info
+        if hasattr(self, 'rank_info') and self.rank_info:
+            cv2.putText(frame, self.rank_info, (80, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 215, 0), 2)
+        else:
+            cv2.putText(frame, "Submitting Score...", (180, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+
+        cv2.putText(frame, "Press [SPACE] to Restart", (150, 350), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+        cv2.putText(frame, "Press [ESC] to Quit", (180, 390), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+        
+        return frame
 
     def handle_audio_fx(self):
          if self.jutsu_active and not self.signature_sound_played:
@@ -218,11 +295,33 @@ class GameSession(FireballJutsuTrainer):
             if time.time() - self.jutsu_start_time > self.jutsu_duration:
                 self.jutsu_active = False
                 self.current_step = 0
+                
+                if self.mode == "challenge":
+                    self.finish_challenge()
 
     def render_game_over(self):
         img = np.zeros((630, 640, 3), dtype=np.uint8) # Match canvas size roughly
         text = "YOU WIN" if self.my_hp > 0 else "YOU DIED"
         color = (0, 255, 0) if self.my_hp > 0 else (0, 0, 255)
+        
+        cv2.putText(img, text, (200, 300), cv2.FONT_HERSHEY_SIMPLEX, 3, color, 5)
+        
+        if self.mode == "multiplayer" and self.enemy_last_photo is not None:
+             # Draw enemy capture small
+             pass
+             
+        return img
+        
+    def set_sfx_volume(self, vol):
+        try:
+            if hasattr(self, 'sound_each'): self.sound_each.set_volume(vol)
+            if hasattr(self, 'sound_complete'): self.sound_complete.set_volume(vol)
+            # Try to update dictionary of sounds if it exists (common pattern)
+            if hasattr(self, 'jutsu_sounds'):
+                for s in self.jutsu_sounds.values():
+                    s.set_volume(vol)
+        except:
+            pass
         cv2.putText(img, text, (200, 300), cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
         return img
 

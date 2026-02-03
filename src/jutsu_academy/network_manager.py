@@ -182,7 +182,7 @@ class NetworkManager:
             print(f"[!] Leaderboard fetch failed: {e}")
             return []
 
-    def submit_score(self, username, score_time, mode="Fireball"):
+    def submit_score(self, username, score_time, mode="Fireball", discord_id=None, avatar_url=None):
         """Upload score to DB"""
         if not self.client: return
         try:
@@ -191,6 +191,9 @@ class NetworkManager:
                 "score_time": float(score_time),
                 "mode": mode
             }
+            if discord_id: data["discord_id"] = discord_id
+            if avatar_url: data["avatar_url"] = avatar_url
+
             self.client.table('leaderboard').insert(data).execute()
             print(f"[+] Score submitted: {score_time}s by {username}")
         except Exception as e:
