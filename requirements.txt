@@ -9,6 +9,7 @@ pygame>=2.6.0  # Sound effects
 opencv-python>=4.8.0
 mediapipe>=0.10.9
 cvzone>=1.5.0
+websockets>=12.0  # For Godot backend server
 
 # Additional dependencies (usually installed with ultralytics)
 numpy>=1.23.0

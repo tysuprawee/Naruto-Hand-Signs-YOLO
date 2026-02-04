@@ -383,8 +383,7 @@ class JutsuTrainerPygame:
                 if path.exists():
                     try:
                         img = pygame.image.load(str(path))
-                        # Use smoothscale for better quality
-                        self.icons[name] = pygame.transform.smoothscale(img, (80, 80))
+                        self.icons[name] = pygame.transform.scale(img, (70, 70))
                         break
                     except:
                         pass
@@ -498,8 +497,8 @@ class JutsuTrainerPygame:
         panel.fill(COLORS["bg_panel"])
         
         # Draw sequence icons
-        icon_size = 80
-        gap = 12
+        icon_size = 70
+        gap = 10
         n_signs = len(self.sequence)
         total_width = n_signs * (icon_size + gap) - gap
         start_x = (self.cam_width - total_width) // 2
