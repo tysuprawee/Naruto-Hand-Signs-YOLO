@@ -36,10 +36,12 @@ ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
 
 class LauncherApp(ctk.CTk):
+    APP_VERSION = "1.0.0"  # Current app version
+    
     def __init__(self):
         super().__init__()
 
-        self.title("Jutsu Academy v1.00 Prototype")
+        self.title(f"Jutsu Academy v{self.APP_VERSION}")
         self.geometry("1024x768")
         
         # State
@@ -48,16 +50,122 @@ class LauncherApp(ctk.CTk):
         self.selected_camera_index = 0
         self.username = "Ninja" # Default user
         self.camera_map = {}
+        self.announcements = []  # Store fetched announcements
         
         self.load_session() # Load persistent login
         
         # --- ONLINE STATUS ---
         self.online = supabase is not None  # Check if Supabase client was created
+        
+        # --- FETCH ANNOUNCEMENTS (Background) ---
+        if self.online:
+            threading.Thread(target=self._fetch_announcements, daemon=True).start()
 
         # --- AUDIO ---
         self.music_volume = 0.35
         self.is_muted = False
         self.try_play_music()
+    
+    def _fetch_announcements(self):
+        """Fetch announcements from Supabase in background."""
+        try:
+            # Only fetch active announcements (not version entries)
+            response = supabase.table("app_config").select("*").eq("type", "announcement").eq("is_active", True).order("priority", desc=True).order("created_at", desc=True).limit(10).execute()
+            self.announcements = response.data if response.data else []
+            if self.announcements:
+                print(f"[+] Loaded {len(self.announcements)} announcement(s)")
+                # Show popup on main thread after short delay
+                self.after(1500, self._show_announcement_popup)
+        except Exception as e:
+            print(f"[!] Failed to fetch announcements: {e}")
+    
+    def _show_announcement_popup(self):
+        """Show paginated announcement popup as overlay in main window."""
+        if not self.announcements:
+            return
+        
+        # Create dark overlay backdrop (covers entire window)
+        self.announcement_overlay = ctk.CTkFrame(self, fg_color="#000000")
+        self.announcement_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.announcement_overlay.configure(fg_color=("#000000", "#000000"))  # Semi-dark backdrop
+        
+        # Create popup card (centered)
+        popup_card = ctk.CTkFrame(self.announcement_overlay, fg_color="#2a2a2f", corner_radius=20, width=450, height=300)
+        popup_card.place(relx=0.5, rely=0.5, anchor="center")
+        popup_card.pack_propagate(False)
+        
+        # Inner card
+        inner_card = ctk.CTkFrame(popup_card, fg_color="#18181b", corner_radius=18)
+        inner_card.pack(fill="both", expand=True, padx=3, pady=3)
+        
+        # State for pagination
+        current_page = [0]
+        total_pages = len(self.announcements)
+        
+        # Title
+        ctk.CTkLabel(inner_card, text="📢 ANNOUNCEMENTS", font=("Impact", 28), text_color="#f59e0b").pack(pady=(25, 10))
+        
+        # Page indicator
+        page_label = ctk.CTkLabel(inner_card, text=f"1 / {total_pages}", font=("Arial", 12), text_color="#666")
+        page_label.pack()
+        
+        # Message content
+        message_label = ctk.CTkLabel(inner_card, text="", font=("Arial", 15), text_color="white", wraplength=400, justify="center")
+        message_label.pack(pady=25, padx=30, fill="both", expand=True)
+        
+        def close_popup():
+            self.announcement_overlay.destroy()
+        
+        def update_content():
+            idx = current_page[0]
+            msg = self.announcements[idx].get("message", "No message")
+            if isinstance(msg, list):
+                msg = msg[0] if msg else "No message"
+            message_label.configure(text=str(msg))
+            page_label.configure(text=f"{idx + 1} / {total_pages}")
+            btn_prev.configure(state="normal" if idx > 0 else "disabled")
+            btn_next.configure(state="normal" if idx < total_pages - 1 else "disabled")
+        
+        def prev_page():
+            if current_page[0] > 0:
+                current_page[0] -= 1
+                update_content()
+        
+        def next_page():
+            if current_page[0] < total_pages - 1:
+                current_page[0] += 1
+                update_content()
+        
+        # Navigation buttons
+        nav_frame = ctk.CTkFrame(inner_card, fg_color="transparent")
+        nav_frame.pack(pady=20)
+        
+        btn_prev = ctk.CTkButton(nav_frame, text="< Prev", width=90, height=35, fg_color="#333", hover_color="#555", font=("Arial", 13), command=prev_page)
+        btn_prev.pack(side="left", padx=8)
+        
+        ctk.CTkButton(nav_frame, text="Close", width=90, height=35, fg_color="#f59e0b", hover_color="#d97706", font=("Arial", 13, "bold"), command=close_popup).pack(side="left", padx=8)
+        
+        btn_next = ctk.CTkButton(nav_frame, text="Next >", width=90, height=35, fg_color="#333", hover_color="#555", font=("Arial", 13), command=next_page)
+        btn_next.pack(side="left", padx=8)
+        
+        # Initial content
+        update_content()
+        
+        # Lift overlay to top
+        self.announcement_overlay.lift()
+    
+    def _count_custom_jutsus(self):
+        """Count custom jutsus from local storage."""
+        try:
+            custom_path = os.path.join("src", "custom_jutsus.dat")
+            if not os.path.exists(custom_path):
+                return 0
+            with open(custom_path, "rb") as f:
+                encoded = f.read()
+                data = json.loads(base64.b64decode(encoded).decode('utf-8'))
+                return len(data)
+        except:
+            return 0
 
     def try_play_music(self):
         try:
@@ -446,6 +554,16 @@ class LauncherApp(ctk.CTk):
         ).pack()
 
         ctk.CTkLabel(pnl, text="Developed by James Uzumaki", font=("Arial", 9), text_color="#52525b").pack()
+        
+        # Version label in bottom right corner
+        self.version_label = ctk.CTkLabel(
+            self.menu_frame,
+            text=f"v{self.APP_VERSION}",
+            font=("Arial", 10),
+            text_color="#555",
+            fg_color="transparent"
+        )
+        self.version_label.place(relx=0.99, rely=0.99, anchor="se")
 
 
 
@@ -570,7 +688,23 @@ class LauncherApp(ctk.CTk):
         pnl.pack(padx=50, pady=40, fill="both", expand=True)
 
         # Title
-        ctk.CTkLabel(pnl, text="SELECT GAME MODE", font=("Impact", 42), text_color="#00EE00").pack(pady=(0, 30))
+        ctk.CTkLabel(pnl, text="SELECT GAME MODE", font=("Impact", 42), text_color="#00EE00").pack(pady=(0, 10))
+        
+        # --- ANNOUNCEMENTS (if any) ---
+        if self.announcements:
+            latest = self.announcements[0]
+            msg = latest.get("message", "")
+            if msg:
+                ctk.CTkLabel(pnl, text=f"📢 {msg}", font=("Arial", 12), 
+                            text_color="#f59e0b", wraplength=350).pack(pady=(0, 5))
+        
+        # --- CUSTOM JUTSU COUNT (only if > 0) ---
+        custom_count = self._count_custom_jutsus()
+        if custom_count > 0:
+            ctk.CTkLabel(pnl, text=f"💾 {custom_count} custom jutsu(s) on this device", 
+                        font=("Arial", 11), text_color="#888").pack(pady=(0, 15))
+        else:
+            ctk.CTkLabel(pnl, text="", height=10).pack()  # Spacer
 
         # --- MODES ---
         btn_font = ("Arial", 20, "bold")
@@ -964,16 +1098,27 @@ class LauncherApp(ctk.CTk):
             
     def prev_jutsu(self):
         if self.current_session and self.is_game_active:
-             # Only allow change if Waiting and NOT in countdown
-             if self.current_session.waiting_for_start and not self.current_session.countdown_start_time:
-                 self.current_session.prev_jutsu()
-                 self.update_jutsu_label()
+            # Practice mode: Allow change anytime when not doing a jutsu
+            if self.current_session.mode == "practice":
+                if not self.current_session.jutsu_active:
+                    self.current_session.prev_jutsu()
+                    self.update_jutsu_label()
+            # Challenge mode: Only allow change if Waiting and NOT in countdown
+            elif self.current_session.waiting_for_start and not self.current_session.countdown_start_time:
+                self.current_session.prev_jutsu()
+                self.update_jutsu_label()
 
     def next_jutsu(self):
         if self.current_session and self.is_game_active:
-             if self.current_session.waiting_for_start and not self.current_session.countdown_start_time:
-                 self.current_session.next_jutsu()
-                 self.update_jutsu_label()
+            # Practice mode: Allow change anytime when not doing a jutsu
+            if self.current_session.mode == "practice":
+                if not self.current_session.jutsu_active:
+                    self.current_session.next_jutsu()
+                    self.update_jutsu_label()
+            # Challenge mode: Only allow change if Waiting and NOT in countdown
+            elif self.current_session.waiting_for_start and not self.current_session.countdown_start_time:
+                self.current_session.next_jutsu()
+                self.update_jutsu_label()
             
     def update_jutsu_label(self):
         if self.current_session:
@@ -1057,17 +1202,29 @@ class LauncherApp(ctk.CTk):
             ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
             self.game_label.configure(image=ctk_img)
             
-        # 4. Update UI Visibility (Hide Arrows during Challenge)
-        if self.current_session and self.current_session.mode == "challenge":
-            show_arrows = (self.current_session.waiting_for_start and 
-                           not self.current_session.countdown_start_time)
-            
-            if show_arrows:
-                self.btn_prev.place(relx=0.05, rely=0.5, anchor="center")
-                self.btn_next.place(relx=0.95, rely=0.5, anchor="center")
-            else:
-                self.btn_prev.place_forget()
-                self.btn_next.place_forget()
+        # 4. Update UI Visibility (Arrows for jutsu selection)
+        if self.current_session:
+            if self.current_session.mode == "practice":
+                # Free Play: Always show arrows (can change jutsu anytime when not performing)
+                if not self.current_session.jutsu_active:
+                    self.btn_prev.place(relx=0.05, rely=0.5, anchor="center")
+                    self.btn_next.place(relx=0.95, rely=0.5, anchor="center")
+                    # Update jutsu label to show current move
+                    self.update_jutsu_label()
+                else:
+                    self.btn_prev.place_forget()
+                    self.btn_next.place_forget()
+            elif self.current_session.mode == "challenge":
+                # Challenge: Only show arrows during waiting phase
+                show_arrows = (self.current_session.waiting_for_start and 
+                               not self.current_session.countdown_start_time)
+                
+                if show_arrows:
+                    self.btn_prev.place(relx=0.05, rely=0.5, anchor="center")
+                    self.btn_next.place(relx=0.95, rely=0.5, anchor="center")
+                else:
+                    self.btn_prev.place_forget()
+                    self.btn_next.place_forget()
         
         # 5. Schedule next update (Target ~60 FPS = 16ms)
         self.after(16, self.update_game_loop)
@@ -1116,34 +1273,41 @@ class LauncherApp(ctk.CTk):
             ctk.CTkButton(popup, text="OK", width=100, fg_color="#333", command=popup.destroy).pack(pady=15)
 
     def open_create_jutsu_dialog(self):
-        """Opens a modal to create a custom jutsu."""
+        """Opens a modal to create a custom jutsu with sound, video, and tracking options."""
+        from tkinter import filedialog
+        import shutil
+        
         dialog = ctk.CTkToplevel(self)
         dialog.title("Create New Jutsu")
-        dialog.geometry("500x600")
+        dialog.geometry("550x750")
         dialog.attributes("-topmost", True)
         
+        # Scrollable container for all content
+        scroll = ctk.CTkScrollableFrame(dialog, width=510, height=700)
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
         # Heading
-        ctk.CTkLabel(dialog, text="Design Your Jutsu", font=("Impact", 24)).pack(pady=10)
+        ctk.CTkLabel(scroll, text="🔥 Design Your Jutsu", font=("Impact", 28), text_color="#f59e0b").pack(pady=10)
         
         # Name Input
-        ctk.CTkLabel(dialog, text="Jutsu Name:", font=("Arial", 14)).pack(pady=5)
+        ctk.CTkLabel(scroll, text="Jutsu Name:", font=("Arial", 14, "bold")).pack(pady=(10, 5))
         name_var = ctk.StringVar()
-        entry_name = ctk.CTkEntry(dialog, textvariable=name_var, width=300)
+        entry_name = ctk.CTkEntry(scroll, textvariable=name_var, width=350, height=40, font=("Arial", 14))
         entry_name.pack(pady=5)
         
         # Sequence Tracker
         sequence = []
-        lbl_sequence = ctk.CTkLabel(dialog, text="Sequence: (Empty)", font=("Arial", 14, "bold"), text_color="#f59e0b", wraplength=450)
+        lbl_sequence = ctk.CTkLabel(scroll, text="Sequence: (Empty)", font=("Arial", 14, "bold"), text_color="#f59e0b", wraplength=480)
         lbl_sequence.pack(pady=10)
         
         def update_seq_label():
             if not sequence:
                 lbl_sequence.configure(text="Sequence: (Empty)")
             else:
-                lbl_sequence.configure(text=f"Sequence: {' -> '.join(sequence)}")
+                lbl_sequence.configure(text=f"Sequence: {' → '.join(sequence)}")
         
         def add_sign(sign):
-            if len(sequence) >= 10:
+            if len(sequence) >= 12:
                 return # Max limit
             sequence.append(sign)
             update_seq_label()
@@ -1153,8 +1317,9 @@ class LauncherApp(ctk.CTk):
             update_seq_label()
             
         # Sign Buttons Grid (With Picture Previews)
-        signs_frame = ctk.CTkFrame(dialog, fg_color="#1a1a1a", corner_radius=10)
-        signs_frame.pack(pady=10, padx=20, fill="x")
+        ctk.CTkLabel(scroll, text="Hand Signs (click to add):", font=("Arial", 12), text_color="#888").pack()
+        signs_frame = ctk.CTkFrame(scroll, fg_color="#1a1a1a", corner_radius=10)
+        signs_frame.pack(pady=10, padx=10, fill="x")
         
         available_signs = ["tiger", "boar", "snake", "ram", "bird", "dragon", "dog", "rat", "horse", "monkey", "ox", "hare"]
         
@@ -1175,9 +1340,8 @@ class LauncherApp(ctk.CTk):
         col = 0
         for sign in available_signs:
             btn_frame = ctk.CTkFrame(signs_frame, fg_color="transparent")
-            btn_frame.grid(row=row, column=col, padx=8, pady=8)
+            btn_frame.grid(row=row, column=col, padx=6, pady=6)
             
-            # Icon + Text Button
             if sign_icons.get(sign):
                 btn = ctk.CTkButton(
                     btn_frame,
@@ -1198,49 +1362,132 @@ class LauncherApp(ctk.CTk):
                     command=lambda s=sign: add_sign(s)
                 )
             btn.pack()
-            
-            # Sign name label below icon
-            ctk.CTkLabel(btn_frame, text=sign.capitalize(), font=("Arial", 10), text_color="#888").pack()
+            ctk.CTkLabel(btn_frame, text=sign.capitalize(), font=("Arial", 9), text_color="#666").pack()
             
             col += 1
-            if col > 5:  # 6 columns
+            if col > 5:
                 col = 0
                 row += 1
                 
-        # Controls
-        ctk.CTkButton(dialog, text="Clear Sequence", fg_color="red", command=clear_seq).pack(pady=5)
+        ctk.CTkButton(scroll, text="Clear Sequence", fg_color="#D32F2F", hover_color="#b91c1c", width=150, command=clear_seq).pack(pady=8)
         
+        # === EFFECT TRACKING TARGET ===
+        ctk.CTkLabel(scroll, text="━" * 50, text_color="#333").pack(pady=5)
+        ctk.CTkLabel(scroll, text="Effect Tracking Target:", font=("Arial", 14, "bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(scroll, text="Where should the effect appear?", font=("Arial", 11), text_color="#888").pack()
+        
+        tracking_var = ctk.StringVar(value="hand")
+        tracking_options = [
+            ("🖐️ Hand (Palm)", "hand"),
+            ("👄 Mouth", "mouth"),
+            ("👁️ Eyes", "eyes"),
+            ("🎯 Center Screen", "center")
+        ]
+        
+        tracking_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        tracking_frame.pack(pady=10)
+        
+        for text, value in tracking_options:
+            ctk.CTkRadioButton(
+                tracking_frame, 
+                text=text, 
+                variable=tracking_var, 
+                value=value,
+                font=("Arial", 13),
+                fg_color="#f59e0b",
+                hover_color="#d97706"
+            ).pack(anchor="w", pady=3)
+        
+        # === SOUND EFFECT UPLOAD ===
+        ctk.CTkLabel(scroll, text="━" * 50, text_color="#333").pack(pady=5)
+        ctk.CTkLabel(scroll, text="Sound Effect (Optional):", font=("Arial", 14, "bold")).pack(pady=(10, 5))
+        
+        sound_path_var = ctk.StringVar(value="")
+        lbl_sound = ctk.CTkLabel(scroll, text="No sound selected", font=("Arial", 11), text_color="#666")
+        lbl_sound.pack(pady=3)
+        
+        def browse_sound():
+            path = filedialog.askopenfilename(
+                title="Select Sound Effect",
+                filetypes=[("Audio Files", "*.mp3 *.wav *.ogg"), ("All Files", "*.*")]
+            )
+            if path:
+                sound_path_var.set(path)
+                lbl_sound.configure(text=f"✓ {os.path.basename(path)}", text_color="#22c55e")
+        
+        ctk.CTkButton(scroll, text="📁 Browse Sound", fg_color="#333", hover_color="#555", width=180, command=browse_sound).pack(pady=5)
+        
+        # === VIDEO EFFECT UPLOAD ===
+        ctk.CTkLabel(scroll, text="━" * 50, text_color="#333").pack(pady=5)
+        ctk.CTkLabel(scroll, text="Video Effect (Optional):", font=("Arial", 14, "bold")).pack(pady=(10, 5))
+        ctk.CTkLabel(scroll, text="Use MP4 with BLACK background for overlay effect", font=("Arial", 10), text_color="#888").pack()
+        
+        video_path_var = ctk.StringVar(value="")
+        lbl_video = ctk.CTkLabel(scroll, text="No video selected", font=("Arial", 11), text_color="#666")
+        lbl_video.pack(pady=3)
+        
+        def browse_video():
+            path = filedialog.askopenfilename(
+                title="Select Video Effect (Black Background)",
+                filetypes=[("Video Files", "*.mp4 *.webm *.avi"), ("All Files", "*.*")]
+            )
+            if path:
+                video_path_var.set(path)
+                lbl_video.configure(text=f"✓ {os.path.basename(path)}", text_color="#22c55e")
+        
+        ctk.CTkButton(scroll, text="🎬 Browse Video", fg_color="#333", hover_color="#555", width=180, command=browse_video).pack(pady=5)
+        
+        # === FILE SIZE LIMITS ===
+        MAX_SOUND_SIZE_MB = 5
+        MAX_VIDEO_SIZE_MB = 20
+        
+        # === SAVE FUNCTION (Local Storage Only) ===
         def save_jutsu():
             name = name_var.get().strip()
             if not name:
-                print("Name required")
+                ctk.CTkLabel(scroll, text="⚠️ Name is required!", text_color="red").pack()
                 return
             if not sequence:
-                print("Sequence required")
+                ctk.CTkLabel(scroll, text="⚠️ Sequence is required!", text_color="red").pack()
                 return
             
-            # Create Data Object
-            new_jutsu = {
-                "sequence": sequence,
-                "display_text": f"{name.upper()}!!",
-                "sound_path": None,
-                "video_path": None,
-                "effect": "fire" # Default to fire for custom
-            }
+            # Create local assets folder
+            safe_name = name.lower().replace(" ", "_")
+            assets_dir = os.path.join("src", "custom_assets", safe_name)
+            os.makedirs(assets_dir, exist_ok=True)
             
-            # File Path (Local Cache)
-            custom_path = os.path.join("src", "custom_jutsus.dat")
+            final_sound_path = None
+            final_video_path = None
             
             try:
-                # === CLOUD SAVE (Supabase) ===
-                response = supabase.table("custom_jutsus").insert({
-                    "user_id": self.username,
-                    "name": name,
-                    "sequence": sequence
-                }).execute()
-                print(f"[+] Cloud Saved: {name} for {self.username}")
+                # === COPY SOUND TO LOCAL STORAGE ===
+                if sound_path_var.get():
+                    src_sound = sound_path_var.get()
+                    ext = os.path.splitext(src_sound)[1]
+                    final_sound_path = os.path.join(assets_dir, f"sound{ext}")
+                    shutil.copy2(src_sound, final_sound_path)
+                    print(f"[+] Saved sound to: {final_sound_path}")
                 
-                # === LOCAL CACHE (Backup) ===
+                # === COPY VIDEO TO LOCAL STORAGE ===
+                if video_path_var.get():
+                    src_video = video_path_var.get()
+                    ext = os.path.splitext(src_video)[1]
+                    final_video_path = os.path.join(assets_dir, f"video{ext}")
+                    shutil.copy2(src_video, final_video_path)
+                    print(f"[+] Saved video to: {final_video_path}")
+                
+                # Create Data Object (local paths only)
+                new_jutsu = {
+                    "sequence": sequence,
+                    "display_text": f"{name.upper()}!!",
+                    "sound_path": final_sound_path,
+                    "video_path": final_video_path,
+                    "effect": "custom",
+                    "tracking_target": tracking_var.get()
+                }
+                
+                # === LOCAL STORAGE ONLY ===
+                custom_path = os.path.join("src", "custom_jutsus.dat")
                 current_data = {}
                 if os.path.exists(custom_path):
                     with open(custom_path, "rb") as f:
@@ -1256,12 +1503,30 @@ class LauncherApp(ctk.CTk):
                     f.write(encoded_str)
                     
                 print(f"[+] Local Cache Updated: {name}")
+                print(f"    Tracking: {tracking_var.get()}")
+                print(f"    Sound: {final_sound_path}")
+                print(f"    Video: {final_video_path}")
+                
                 dialog.destroy()
+                
+                # Show success message
+                success = ctk.CTkToplevel(self)
+                success.title("Success")
+                success.geometry("320x150")
+                success.attributes("-topmost", True)
+                ctk.CTkLabel(success, text="✅ Jutsu Created!", font=("Impact", 24), text_color="#22c55e").pack(pady=15)
+                ctk.CTkLabel(success, text=f"{name} is now available!", font=("Arial", 14)).pack()
+                ctk.CTkButton(success, text="OK", width=100, command=success.destroy).pack(pady=10)
                 
             except Exception as e:
                 print(f"[!] Failed to save: {e}")
+                import traceback
+                traceback.print_exc()
+                ctk.CTkLabel(scroll, text=f"⚠️ Error: {str(e)[:50]}", text_color="red").pack()
         
-        ctk.CTkButton(dialog, text="SAVE JUTSU", fg_color="green", height=40, command=save_jutsu).pack(pady=20)
+        # Save Button
+        ctk.CTkLabel(scroll, text="━" * 50, text_color="#333").pack(pady=10)
+        ctk.CTkButton(scroll, text="💾 SAVE JUTSU", fg_color="#22c55e", hover_color="#16a34a", height=50, font=("Arial", 16, "bold"), command=save_jutsu).pack(pady=15)
 
 
 if __name__ == "__main__":

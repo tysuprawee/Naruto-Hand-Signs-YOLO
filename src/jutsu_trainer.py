@@ -209,40 +209,46 @@ class FireballJutsuTrainer:
         return jutsu_list
 
     def _start_cloud_sync(self, username="Ninja"):
-        """Start background thread to fetch cloud jutsus."""
-        t = threading.Thread(target=self._fetch_cloud_jutsus_thread, args=(username,), daemon=True)
+        """Start background thread to load local custom jutsus."""
+        t = threading.Thread(target=self._load_local_custom_jutsus, daemon=True)
         t.start()
 
-    def _fetch_cloud_jutsus_thread(self, username):
-        """Background worker to fetch Supabase data."""
+    def _load_local_custom_jutsus(self):
+        """Load custom jutsus from local storage (custom_jutsus.dat)."""
         try:
-            # print("[*] Syncing jutsus from cloud...")
-            response = supabase_client.table("custom_jutsus").select("*").eq("user_id", username).execute()
+            custom_path = Path(__file__).parent.parent / "custom_jutsus.dat"
+            
+            if not custom_path.exists():
+                return
+            
+            with open(custom_path, "rb") as f:
+                encoded = f.read()
+                custom_data = json.loads(base64.b64decode(encoded).decode('utf-8'))
             
             count = 0
-            for row in response.data:
-                name = row.get("name")
-                sequence = row.get("sequence")
-                
-                # Check conflict
+            for name, jutsu_data in custom_data.items():
+                # Check conflict with official jutsus
                 if name in OFFICIAL_JUTSUS:
                     continue
                 
-                # Update main list (Dict operations are atomic-ish in GIL, safe enough here)
+                # Add to jutsu list
                 self.jutsu_list[name] = {
-                    "sequence": sequence,
-                    "display_text": f"{name.upper()}!!",
-                    "sound_path": None,
-                    "video_path": None,
-                    "effect": "fire"
+                    "sequence": jutsu_data.get("sequence", []),
+                    "display_text": jutsu_data.get("display_text", f"{name.upper()}!!"),
+                    "sound_path": jutsu_data.get("sound_path"),
+                    "video_path": jutsu_data.get("video_path"),
+                    "effect": jutsu_data.get("effect", "custom"),
+                    "tracking_target": jutsu_data.get("tracking_target", "hand")
                 }
                 count += 1
             
             if count > 0:
-                print(f"[+] Cloud Sync Complete: Loaded {count} new jutsus from Supabase.")
+                # Update jutsu_names to include custom jutsus
+                self.jutsu_names = list(self.jutsu_list.keys())
+                print(f"[+] Loaded {count} custom jutsus from local storage.")
                 
         except Exception as e:
-            print(f"[!] Cloud Sync Failed (Offline?): {e}")
+            print(f"[!] Failed to load local custom jutsus: {e}")
 
     # DEPRECATED: Old Sync Load
     def _load_jutsu_recipes_OLD(self, username="Ninja"):
@@ -364,6 +370,15 @@ class FireballJutsuTrainer:
             # Load per-jutsu signature sounds
             for jutsu_name, jutsu_data in self.jutsu_list.items():
                 sound_file = jutsu_data.get("sound", "")
+                custom_sound_path = jutsu_data.get("sound_path")
+                
+                # Priority 1: Custom sound_path (absolute path from custom jutsu creator)
+                if custom_sound_path and Path(custom_sound_path).exists():
+                    self.jutsu_sounds[jutsu_name] = pygame.mixer.Sound(str(custom_sound_path))
+                    print(f"[+] Loaded custom sound: {Path(custom_sound_path).name}")
+                    continue
+                
+                # Priority 2: Relative sound file from official jutsus
                 if not sound_file:
                     continue
 
@@ -1045,6 +1060,104 @@ class FireballJutsuTrainer:
                         pass
                 else:
                      cv2.putText(frame, "SHARINGAN!", (effect_x-100, effect_y-150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
+            elif effect_type == "custom":
+                # Custom user-uploaded effect
+                current_jutsu = self.jutsu_names[self.current_jutsu_idx]
+                jutsu_data = self.jutsu_list[current_jutsu]
+                video_path = jutsu_data.get("video_path")
+                tracking_target = jutsu_data.get("tracking_target", "hand")
+                
+                # Determine effect position based on tracking target
+                fh, fw = frame.shape[:2]
+                
+                if tracking_target == "hand":
+                    if self.last_hand_center:
+                        effect_x, effect_y = self.last_hand_center
+                    # else use default cx, cy from face
+                elif tracking_target == "mouth":
+                    # Use mouth position (already set in cx, cy)
+                    effect_x, effect_y = cx, cy
+                elif tracking_target == "eyes":
+                    # Use mid-point between eyes
+                    if face_landmarks and len(face_landmarks) > 160:
+                        try:
+                            left_eye = face_landmarks[159]
+                            right_eye = face_landmarks[386]
+                            effect_x = int((left_eye.x + right_eye.x) / 2 * fw)
+                            effect_y = int((left_eye.y + right_eye.y) / 2 * fh)
+                        except:
+                            pass
+                elif tracking_target == "center":
+                    effect_x, effect_y = fw // 2, fh // 2
+                
+                # Load and render custom video if available
+                if video_path and Path(video_path).exists():
+                    # Check if we need to load this video
+                    if not hasattr(self, '_custom_videos'):
+                        self._custom_videos = {}
+                    
+                    if current_jutsu not in self._custom_videos:
+                        self._custom_videos[current_jutsu] = cv2.VideoCapture(video_path)
+                        print(f"[+] Loaded custom video for {current_jutsu}")
+                    
+                    custom_vid = self._custom_videos[current_jutsu]
+                    ret_vid, vid_frame = custom_vid.read()
+                    if not ret_vid:
+                        # Loop
+                        custom_vid.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret_vid, vid_frame = custom_vid.read()
+                    
+                    if ret_vid and vid_frame is not None:
+                        # Scale to reasonable size
+                        scale = 0.5
+                        vid_frame = cv2.resize(vid_frame, None, fx=scale, fy=scale)
+                        effect_h, effect_w = vid_frame.shape[:2]
+                        
+                        x1 = effect_x - effect_w // 2
+                        y1 = effect_y - effect_h // 2
+                        x2, y2 = x1 + effect_w, y1 + effect_h
+                        
+                        # Clamp bounds
+                        src_x1 = max(0, -x1)
+                        src_y1 = max(0, -y1)
+                        src_x2 = effect_w - max(0, x2 - fw)
+                        src_y2 = effect_h - max(0, y2 - fh)
+                        
+                        dst_x1 = max(0, x1)
+                        dst_y1 = max(0, y1)
+                        dst_x2 = min(fw, x2)
+                        dst_y2 = min(fh, y2)
+                        
+                        # Apply additive blending (black background removal)
+                        if dst_x2 > dst_x1 and dst_y2 > dst_y1:
+                            roi = frame[dst_y1:dst_y2, dst_x1:dst_x2]
+                            effect_crop = vid_frame[src_y1:src_y2, src_x1:src_x2]
+                            
+                            # Radial gradient mask for feathering
+                            mask_h, mask_w = effect_crop.shape[:2]
+                            center_x, center_y = mask_w // 2, mask_h // 2
+                            Y, X = np.ogrid[:mask_h, :mask_w]
+                            dist = np.sqrt(((X - center_x) / (mask_w / 2))**2 + ((Y - center_y) / (mask_h / 2))**2)
+                            alpha = np.clip(1.0 - (dist - 0.7) / 0.3, 0, 1)
+                            alpha = (alpha ** 1.5).astype(np.float32)
+                            alpha_3ch = np.dstack([alpha, alpha, alpha])
+                            
+                            # Additive blend
+                            effect_float = effect_crop.astype(np.float32) * alpha_3ch
+                            blended = np.clip(roi.astype(np.float32) + effect_float, 0, 255).astype(np.uint8)
+                            frame[dst_y1:dst_y2, dst_x1:dst_x2] = blended
+                else:
+                    # No custom video - show fallback fire effect
+                    self.fire_effect.update()
+                    fire_rgba = self.fire_effect.render()
+                    fw_size, fh_size = self.fire_effect.fire_size, self.fire_effect.fire_size
+                    pos = [effect_x - fw_size//2, effect_y - fh_size//2]
+                    try:
+                        frame = cvzone.overlayPNG(frame, fire_rgba, pos)
+                    except:
+                        pass
+
 
         # Render Sharingan if Always-On is active and not already rendered
         should_render_always = self.show_sharingan_always and self.show_effects
