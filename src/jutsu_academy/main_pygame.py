@@ -18,6 +18,7 @@ import cv2
 import time
 import math
 import argparse
+import socket
 from pathlib import Path
 import numpy as np
 import pygame
@@ -36,6 +37,17 @@ import mediapipe as mp
 
 from src.utils.paths import get_class_names, get_latest_weights
 from src.jutsu_registry import OFFICIAL_JUTSUS
+from src.jutsu_registry import OFFICIAL_JUTSUS
+
+# Safe Import NetworkManager
+try:
+    from src.jutsu_academy.network_manager import NetworkManager
+except ImportError:
+    print("[!] NetworkManager import failed (missing supabase?). using mock.")
+    class NetworkManager:
+        def __init__(self): self.client = None
+        def get_leaderboard(self, **kwargs): return []
+        def submit_score(self, **kwargs): pass
 
 # Try importing Discord auth and dotenv
 try:
@@ -200,14 +212,19 @@ class Button:
         self.font = None
         self.enabled = True
     
-    def update(self, mouse_pos, mouse_click, mouse_down):
+    def update(self, mouse_pos, mouse_click, mouse_down, play_sound=None):
         if not self.enabled:
             self.hovered = False
             self.pressed = False
             self.press_started = False
             return False
         
+        prev_hover = self.hovered
         self.hovered = self.rect.collidepoint(mouse_pos)
+        
+        # Hover Sound
+        if self.hovered and not prev_hover and play_sound:
+            play_sound("hover")
         
         # Track if mouse press started on this button
         if mouse_click and self.hovered:
@@ -223,6 +240,9 @@ class Button:
             if self.hovered:
                 # Released on the button - valid click!
                 clicked = True
+                if play_sound:
+                    play_sound("click")
+                    
             # Reset press tracking
             self.press_started = False
         
@@ -334,19 +354,23 @@ class Dropdown:
         self.rect = pygame.Rect(x, y, width, self.height)
         self.font = None
     
-    def update(self, mouse_pos, mouse_click):
+    def update(self, mouse_pos, mouse_click, play_sound=None):
         if mouse_click:
             if self.is_open:
                 # Check if clicked on an option
                 for i, _ in enumerate(self.options):
                     opt_rect = pygame.Rect(self.x, self.y + (i + 1) * self.height, self.width, self.height)
                     if opt_rect.collidepoint(mouse_pos):
+                        if play_sound: play_sound("click")
                         self.selected_idx = i
                         self.is_open = False
                         return True
                 # Click outside closes
-                self.is_open = False
+                if self.is_open: # Only if it was open
+                     self.is_open = False
+                     # Optional: Click outside close sound? No.
             elif self.rect.collidepoint(mouse_pos):
+                if play_sound: play_sound("click")
                 self.is_open = True
         return False
     
@@ -402,6 +426,8 @@ class GameState:
     QUIT_CONFIRM = "quit_confirm" # Modal to confirm exit
     WELCOME_MODAL = "welcome_modal" # Modal to show after login success
     LOGOUT_CONFIRM = "logout_confirm" # Modal to confirm logout
+    CONNECTION_LOST = "connection_lost" # Modal when internet drops
+    LEADERBOARD = "leaderboard" # Leaderboard screen
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -476,6 +502,15 @@ class JutsuAcademy:
         
         # ML Models (lazy loaded)
         self.model = None
+        
+        # Connection Monitor
+        self.connection_fail_count = 0
+        threading.Thread(target=self._monitor_connection_loop, daemon=True).start()
+        
+        # Network & Leaderboard
+        self.network_manager = NetworkManager()
+        self.leaderboard_data = []
+        self.leaderboard_loading = False
         self.class_names = None
         self.face_landmarker = None
         self.hand_landmarker = None
@@ -538,6 +573,7 @@ class JutsuAcademy:
         self._create_settings_ui()
         self._create_practice_select_ui()
         self._create_about_ui()
+        self._create_leaderboard_ui()
         
         # FPS tracking
         self.fps = 0
@@ -560,7 +596,7 @@ class JutsuAcademy:
         """Load sound effects."""
         sounds_dir = Path("src/sounds")
         
-        for name in ["each", "complete"]:
+        for name in ["each", "complete", "hover", "click"]:
             for ext in [".mp3", ".wav"]:
                 path = sounds_dir / f"{name}{ext}"
                 if path.exists():
@@ -577,6 +613,8 @@ class JutsuAcademy:
             if sound_path and Path(sound_path).exists():
                 try:
                     self.sounds[name] = pygame.mixer.Sound(sound_path)
+                    if name == "chidori":
+                        self.sounds[name].set_volume(0.3)
                     print(f"[+] Jutsu sound loaded: {name}")
                 except Exception as e:
                     print(f"[!] Jutsu sound error ({name}): {e}")
@@ -584,8 +622,8 @@ class JutsuAcademy:
     def _try_play_music(self):
         """Try to play background music."""
         music_paths = [
-            Path("src/sounds/music1.mp3"),
             Path("src/sounds/music2.mp3"),
+            Path("src/sounds/music1.mp3"),
             Path("src/sounds/bgm.mp3"),
             Path("src/sounds/background.mp3"),
         ]
@@ -791,6 +829,26 @@ class JutsuAcademy:
                 json.dump(data, f)
         except Exception as e:
             print(f"[!] Session save error: {e}")
+
+    def _monitor_connection_loop(self):
+        """Monitor internet connection in background."""
+        while True:
+            try:
+                # Ping Google DNS
+                socket.create_connection(("8.8.8.8", 53), timeout=3)
+                self.connection_fail_count = 0
+            except OSError:
+                if self.state != GameState.CONNECTION_LOST:
+                    print(f"[!] Connection check failed ({self.connection_fail_count + 1})")
+                    self.connection_fail_count += 1
+                    
+                    if self.connection_fail_count >= 3:
+                        print("[!] Connection lost. Terminating session.")
+                        # Logout and show connection lost screen
+                        self.logout_discord()
+                        self.state = GameState.CONNECTION_LOST
+            
+            time.sleep(10) # Check every 10 seconds
     
     def _load_discord_avatar(self):
         """Load Discord avatar from URL."""
@@ -980,9 +1038,10 @@ class JutsuAcademy:
         cx = SCREEN_WIDTH // 2
         
         self.practice_buttons = {
-            "freeplay": Button(cx - 150, 300, 300, 70, "FREE PLAY"),
-            "challenge": Button(cx - 150, 400, 300, 70, "CHALLENGE"),
-            "back": Button(cx - 100, 550, 200, 50, "BACK"),
+            "freeplay": Button(cx - 150, 250, 300, 70, "FREE PLAY"),
+            "challenge": Button(cx - 150, 350, 300, 70, "CHALLENGE"),
+            "leaderboard": Button(cx - 150, 450, 300, 60, "LEADERBOARD", color=(218, 165, 32)), # Gold
+            "back": Button(cx - 100, 600, 200, 50, "BACK"),
         }
     
     def _create_about_ui(self):
@@ -991,6 +1050,13 @@ class JutsuAcademy:
         
         self.about_buttons = {
             "back": Button(cx - 100, 650, 200, 50, "BACK"),
+        }
+        
+    def _create_leaderboard_ui(self):
+        """Create leaderboard UI."""
+        self.leaderboard_buttons = {
+            "back": Button(50, 50, 100, 40, "< Back", font_size=20),
+            "refresh": Button(SCREEN_WIDTH - 150, 50, 100, 40, "Refresh", font_size=20, color=COLORS["success"])
         }
     
     def _load_ml_models(self):
@@ -1157,6 +1223,7 @@ class JutsuAcademy:
         results = self.model(frame, stream=True, verbose=False, imgsz=320)
         detected_class = None
         highest_conf = 0.0
+        self.hand_pos = None # Reset
         
         for r in results:
             for box in r.boxes:
@@ -1169,6 +1236,8 @@ class JutsuAcademy:
                 if conf > 0.5 and conf > highest_conf:
                     highest_conf = conf
                     detected_class = cls_name
+                    # Store center
+                    self.hand_pos = ((x1 + x2) // 2, (y1 + y2) // 2)
                 
                 # Draw bbox
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
@@ -1572,60 +1641,74 @@ class JutsuAcademy:
 
     def render_welcome_modal(self):
         """Render the welcome success modal."""
-        # 1. Dark overlay
+        # 1. Dark overlay (Heavier for focus)
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))
+        overlay.fill((0, 0, 0, 240)) # Very dark bg
         self.screen.blit(overlay, (0, 0))
         
-        # 2. Modal Box
-        modal_w, modal_h = 500, 300
+        # 2. Modal Box - Glassmorphism style
+        modal_w, modal_h = 500, 320
         modal_x = (SCREEN_WIDTH - modal_w) // 2
         modal_y = (SCREEN_HEIGHT - modal_h) // 2
         modal_rect = pygame.Rect(modal_x, modal_y, modal_w, modal_h)
         
-        # Shadow
-        shadow_rect = modal_rect.copy()
-        shadow_rect.inflate_ip(4, 4)
-        shadow_rect.y += 4
-        pygame.draw.rect(self.screen, (0, 0, 0, 100), shadow_rect, border_radius=16)
-        
-        # Background
-        pygame.draw.rect(self.screen, COLORS["bg_panel"], modal_rect, border_radius=16)
-        pygame.draw.rect(self.screen, COLORS["success"], modal_rect, 2, border_radius=16) # Green border
+        # Panel Shadow/Glow
+        shadow_surf = pygame.Surface((modal_w + 40, modal_h + 40), pygame.SRCALPHA)
+        pygame.draw.rect(shadow_surf, (0, 255, 0, 20), shadow_surf.get_rect(), border_radius=30)
+        self.screen.blit(shadow_surf, (modal_x - 20, modal_y - 20))
+
+        # Background (Dark semi-transparent)
+        modal_surf = pygame.Surface((modal_w, modal_h), pygame.SRCALPHA)
+        pygame.draw.rect(modal_surf, (30, 30, 35, 255), modal_surf.get_rect(), border_radius=20)
+        pygame.draw.rect(modal_surf, (50, 50, 55, 255), modal_surf.get_rect(), 1, border_radius=20)
+        self.screen.blit(modal_surf, (modal_x, modal_y))
         
         # Avatar (Large)
+        avatar_y_center = modal_y + 80
         if self.user_avatar:
             # Scale avatar up
-            scaled_avatar = pygame.transform.smoothscale(self.user_avatar, (80, 80))
-            avatar_rect = scaled_avatar.get_rect(center=(modal_x + modal_w//2, modal_y + 70))
+            scaled_avatar = pygame.transform.smoothscale(self.user_avatar, (100, 100))
+            avatar_rect = scaled_avatar.get_rect(center=(modal_x + modal_w//2, avatar_y_center))
+            
+            # Draw glow behind avatar
+            pygame.draw.circle(self.screen, (0, 255, 0, 40), avatar_rect.center, 60)
             
             # Draw circle mask/border
-            pygame.draw.circle(self.screen, COLORS["border"], avatar_rect.center, 42)
+            pygame.draw.circle(self.screen, COLORS["success"], avatar_rect.center, 52)
+            pygame.draw.circle(self.screen, (0,0,0), avatar_rect.center, 50) # Black border
             self.screen.blit(scaled_avatar, avatar_rect)
+        else:
+             # Default icon if no avatar
+             pygame.draw.circle(self.screen, COLORS["bg_card"], (modal_x + modal_w//2, avatar_y_center), 50)
+             pygame.draw.circle(self.screen, COLORS["success"], (modal_x + modal_w//2, avatar_y_center), 52, 2)
         
         # Title
         username = self.username if self.username else "Shinobi"
-        title = self.fonts["title_sm"].render(f"Welcome, {username}!", True, COLORS["success"])
-        title_rect = title.get_rect(center=(modal_x + modal_w//2, modal_y + 130 if self.user_avatar else modal_y + 80))
+        title = self.fonts["title_md"].render(f"WELCOME, {username.upper()}", True, (255, 255, 255))
+        title_rect = title.get_rect(center=(modal_x + modal_w//2, avatar_y_center + 70))
         self.screen.blit(title, title_rect)
         
         # Message
-        msg = self.fonts["body_sm"].render("Access Granted. Academy protocols initialized.", True, COLORS["text_dim"])
-        msg_rect = msg.get_rect(center=(modal_x + modal_w//2, title_rect.bottom + 30))
+        msg = self.fonts["body"].render("Access Granted. Academy protocols initialized.", True, COLORS["success"])
+        msg_rect = msg.get_rect(center=(modal_x + modal_w//2, title_rect.bottom + 25))
         self.screen.blit(msg, msg_rect)
             
         # Continue Button
-        btn_w, btn_h = 200, 50
-        btn_y = modal_y + modal_h - 70
+        btn_w, btn_h = 240, 60
+        btn_y = modal_y + modal_h - 80
         mouse_pos = pygame.mouse.get_pos()
         
         self.welcome_ok_rect = pygame.Rect(modal_x + (modal_w - btn_w)//2, btn_y, btn_w, btn_h)
         ok_hover = self.welcome_ok_rect.collidepoint(mouse_pos)
         
-        color = COLORS["success"] if ok_hover else (40, 150, 40)
-        pygame.draw.rect(self.screen, color, self.welcome_ok_rect, border_radius=8)
+        # Button Glow
+        if ok_hover:
+             pygame.draw.rect(self.screen, (0, 255, 0), self.welcome_ok_rect.inflate(4, 4), border_radius=12)
         
-        ok_txt = self.fonts["body_sm"].render("Enter Academy", True, (255, 255, 255))
+        color = (0, 180, 0) if ok_hover else (0, 100, 0)
+        pygame.draw.rect(self.screen, color, self.welcome_ok_rect, border_radius=10)
+        
+        ok_txt = self.fonts["title_sm"].render("ENTER ACADEMY", True, (255, 255, 255))
         self.screen.blit(ok_txt, ok_txt.get_rect(center=self.welcome_ok_rect.center))
         
         if ok_hover:
@@ -1696,6 +1779,53 @@ class JutsuAcademy:
         if logout_hover or cancel_hover:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
 
+    def render_connection_lost(self):
+        """Render the connection lost modal."""
+        # 1. Dark overlay
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 220))
+        self.screen.blit(overlay, (0, 0))
+        
+        # 2. Modal Box
+        modal_w, modal_h = 500, 280
+        modal_x = (SCREEN_WIDTH - modal_w) // 2
+        modal_y = (SCREEN_HEIGHT - modal_h) // 2
+        modal_rect = pygame.Rect(modal_x, modal_y, modal_w, modal_h)
+        
+        # Background
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], modal_rect, border_radius=16)
+        pygame.draw.rect(self.screen, COLORS["error"], modal_rect, 2, border_radius=16)
+        
+        # Icon/Title
+        title = self.fonts["title_sm"].render("Connection Lost", True, COLORS["error"])
+        title_rect = title.get_rect(center=(modal_x + modal_w//2, modal_y + 50))
+        self.screen.blit(title, title_rect)
+        
+        # Message
+        msg_lines = ["Network connection interrupted.", "Session has been terminated."]
+        start_msg_y = modal_y + 100
+        for i, line in enumerate(msg_lines):
+            line_surf = self.fonts["body_sm"].render(line, True, COLORS["text"])
+            line_rect = line_surf.get_rect(center=(modal_x + modal_w//2, start_msg_y + i*30))
+            self.screen.blit(line_surf, line_rect)
+            
+        # Exit Button
+        btn_w, btn_h = 160, 50
+        btn_y = modal_y + modal_h - 80
+        mouse_pos = pygame.mouse.get_pos()
+        
+        self.conn_lost_exit_rect = pygame.Rect(modal_x + (modal_w - btn_w)//2, btn_y, btn_w, btn_h)
+        exit_hover = self.conn_lost_exit_rect.collidepoint(mouse_pos)
+        
+        color = COLORS["error"] if exit_hover else (150, 40, 40)
+        pygame.draw.rect(self.screen, color, self.conn_lost_exit_rect, border_radius=8)
+        
+        exit_txt = self.fonts["body_sm"].render("Exit Game", True, (255, 255, 255))
+        self.screen.blit(exit_txt, exit_txt.get_rect(center=self.conn_lost_exit_rect.center))
+        
+        if exit_hover:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+
     def render_settings(self):
         """Render settings menu."""
         self.screen.fill(COLORS["bg_dark"])
@@ -1723,28 +1853,45 @@ class JutsuAcademy:
             btn.render(self.screen)
     
     def render_practice_select(self):
-        """Render practice mode selection."""
-        self.screen.fill(COLORS["bg_dark"])
+        """Render practice mode selection with enhanced styling."""
+        # 1. Background Logic
+        if self.bg_image:
+             bg = pygame.transform.smoothscale(self.bg_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+             self.screen.blit(bg, (0, 0))
+        else:
+             self.screen.fill(COLORS["bg_dark"])
+             
+        # Overlay
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 210))
+        self.screen.blit(overlay, (0, 0))
+
+        # 2. Main Panel
+        panel_w, panel_h = 560, 650
+        panel_x = (SCREEN_WIDTH - panel_w) // 2
+        panel_y = (SCREEN_HEIGHT - panel_h) // 2
+        
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=20)
+        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=20)
         
         # Title
-        title = self.fonts["title_md"].render("SELECT MODE", True, COLORS["text"])
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 100))
+        title = self.fonts["title_md"].render("SELECT MODE", True, COLORS["accent"])
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, panel_y + 60))
         self.screen.blit(title, title_rect)
         
-        # Description font
-        
-        # Descriptions for modes
         descriptions = {
             "freeplay": "Practice any jutsu at your own pace",
-            "challenge": "Complete jutsus as fast as possible"
+            "challenge": "Complete jutsus as fast as possible",
+            "leaderboard": "View the rankings of the greatest Shinobi"
         }
         
-        y_offset = 380
         for name, btn in self.practice_buttons.items():
             btn.render(self.screen)
             if name in descriptions:
-                desc = self.fonts["body_sm"].render(descriptions[name], True, COLORS["text_dim"])
-                desc_rect = desc.get_rect(center=(SCREEN_WIDTH // 2, btn.rect.bottom + 15))
+                # Use small font to fit
+                desc = self.fonts["small"].render(descriptions[name], True, (180, 180, 190))
+                desc_rect = desc.get_rect(midtop=(btn.rect.centerx, btn.rect.bottom + 5))
                 self.screen.blit(desc, desc_rect)
     
     def render_about(self):
@@ -1863,6 +2010,8 @@ class JutsuAcademy:
         
         pt_lines = [
             "Privacy Policy:",
+            "Camera data is processed LOCALLY on your device.",
+            "No images or video are sent to any server.",
             "We do not collect personal data. Only a local",
             "session file is stored for Discord login.",
             "",
@@ -1908,6 +2057,194 @@ class JutsuAcademy:
         # Back button
         for btn in self.about_buttons.values():
             btn.render(self.screen)
+            
+    def _fetch_leaderboard(self):
+        """Fetch leaderboard data in background."""
+        self.leaderboard_loading = True
+        try:
+            # Use self.leaderboard_mode (default FIREBALL if not set)
+            # DATABASE USES UPPERCASE (based on user artifact)
+            mode = getattr(self, "leaderboard_mode", "FIREBALL").upper()
+            
+            # Pagination
+            self.leaderboard_limit = getattr(self, "leaderboard_limit", 10)
+            self.leaderboard_page = getattr(self, "leaderboard_page", 0)
+            offset = self.leaderboard_page * self.leaderboard_limit
+            
+            data = self.network_manager.get_leaderboard(limit=self.leaderboard_limit, offset=offset, mode=mode)
+            self.leaderboard_data = data if data else []
+        except:
+            self.leaderboard_data = []
+        self.leaderboard_loading = False
+
+    def render_leaderboard(self):
+        """Render leaderboard screen."""
+        self.screen.fill(COLORS["bg_dark"])
+        
+        # Initialize mode if not set
+        if not hasattr(self, "leaderboard_mode"):
+            self.leaderboard_mode = "FIREBALL"
+            
+        # Title
+        title = self.fonts["title_md"].render("HALL OF FAME", True, (218, 165, 32))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 60))
+        self.screen.blit(title, title_rect)
+        
+        # --- Filter / Mode Selection ---
+        center_x = SCREEN_WIDTH // 2
+        y_pos = 110
+        
+        mode_surf = self.fonts["title_sm"].render(self.leaderboard_mode, True, COLORS["accent"])
+        mode_rect = mode_surf.get_rect(center=(center_x, y_pos))
+        self.screen.blit(mode_surf, mode_rect)
+        
+        # Arrows
+        mp = pygame.mouse.get_pos()
+        if "left" in self.arrow_icons:
+             # Left Arrow
+             l_arrow = self.arrow_icons["left"]
+             l_rect = l_arrow.get_rect(center=(center_x - 140, y_pos))
+             self.mode_arrow_left_rect = l_rect
+             
+             if l_rect.collidepoint(mp):
+                 l_arrow.set_alpha(255)
+                 pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+             else:
+                 l_arrow.set_alpha(150)
+             self.screen.blit(l_arrow, l_rect)
+             
+             # Right Arrow
+             r_arrow = self.arrow_icons["right"]
+             r_rect = r_arrow.get_rect(center=(center_x + 140, y_pos))
+             self.mode_arrow_right_rect = r_rect
+             
+             if r_rect.collidepoint(mp):
+                 r_arrow.set_alpha(255)
+                 pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+             else:
+                 r_arrow.set_alpha(150)
+             self.screen.blit(r_arrow, r_rect)
+        else:
+             # Text fallback
+             fallback_surf = self.fonts["body"].render("<  Target  >", True, COLORS["text_dim"])
+             self.screen.blit(fallback_surf, fallback_surf.get_rect(center=(center_x, y_pos + 30)))
+
+        # Draw buttons
+        for btn in self.leaderboard_buttons.values():
+            btn.render(self.screen)
+            
+        # Table
+        panel_rect = pygame.Rect(100, 150, SCREEN_WIDTH - 200, SCREEN_HEIGHT - 200)
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=16)
+        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 1, border_radius=16)
+        
+        # Header
+        h_y = 170
+        headers = ["Rank", "Shinobi", "Score", "Title"] 
+        x_offs = [40, 180, 480, 680]
+        for h, x in zip(headers, x_offs):
+            txt = self.fonts["body"].render(h, True, COLORS["accent"])
+            self.screen.blit(txt, (panel_rect.x + x, h_y))
+            
+        pygame.draw.line(self.screen, COLORS["border"], (panel_rect.x + 20, h_y + 30), (panel_rect.right - 20, h_y + 30))
+        
+        # Rows
+        if self.leaderboard_loading:
+             txt = self.fonts["body"].render("Summoning scrolls...", True, COLORS["text"])
+             self.screen.blit(txt, txt.get_rect(center=panel_rect.center))
+        elif not self.leaderboard_data:
+             txt = self.fonts["body"].render(f"No {self.leaderboard_mode} records found.", True, COLORS["text_dim"])
+             self.screen.blit(txt, txt.get_rect(center=panel_rect.center))
+        else:
+             row_y = h_y + 50
+             
+             page = getattr(self, 'leaderboard_page', 0)
+             limit = getattr(self, 'leaderboard_limit', 10)
+             
+             for i, entry in enumerate(self.leaderboard_data):
+                 # Leave space for pagination
+                 if row_y > panel_rect.bottom - 60: break
+                 
+                 rank_num = i + 1 + (page * limit)
+                 
+                 # Row Background
+                 if rank_num == 1:
+                     # Gold Glow for Hokage
+                     r_glow = pygame.Rect(panel_rect.x + 10, row_y - 8, panel_rect.width - 20, 36)
+                     # Need surface for alpha rect
+                     s = pygame.Surface((r_glow.width, r_glow.height), pygame.SRCALPHA)
+                     s.fill((218, 165, 32, 40)) # Low alpha gold
+                     self.screen.blit(s, r_glow)
+                     pygame.draw.rect(self.screen, (218, 165, 32), r_glow, 1, border_radius=8)
+                 elif i % 2 == 0:
+                     # Alternating dark stripe
+                     r = pygame.Rect(panel_rect.x + 20, row_y - 5, panel_rect.width - 40, 30)
+                     pygame.draw.rect(self.screen, (30, 30, 35), r, border_radius=4)
+                 
+                 # Rank Coloring & Titles
+                 title_text = "Genin"
+                 color = COLORS["text"]
+                 
+                 if rank_num == 1:
+                     title_text = "HOKAGE"
+                     color = (255, 215, 0) # Gold
+                 elif rank_num <= 3:
+                     title_text = "Jonin"
+                     color = (192, 192, 192) # Silver-ish
+                 elif rank_num <= 10:
+                     title_text = "Chunin"
+                     color = (205, 127, 50) # Bronze-ish
+                     
+                 # Rank
+                 self.screen.blit(self.fonts["body_sm"].render(f"#{rank_num}", True, color), (panel_rect.x + x_offs[0], row_y))
+                 
+                 # Name
+                 name = entry.get("username", "Unknown")
+                 self.screen.blit(self.fonts["body_sm"].render(name[:14], True, COLORS["text"]), (panel_rect.x + x_offs[1], row_y))
+                 
+                 # Score
+                 score = f"{entry.get('score_time', 0):.2f}s"
+                 self.screen.blit(self.fonts["body_sm"].render(score, True, COLORS["success"]), (panel_rect.x + x_offs[2], row_y))
+                 
+                 # Title (replacing Mode)
+                 self.screen.blit(self.fonts["body_sm"].render(title_text, True, color), (panel_rect.x + x_offs[3], row_y))
+                 
+                 row_y += 35
+             
+             # Pagination Controls
+             page_y = panel_rect.bottom - 30
+             center_x = panel_rect.centerx
+             
+             # Clean cleanup
+             if hasattr(self, 'leaderboard_prev_rect'): del self.leaderboard_prev_rect
+             if hasattr(self, 'leaderboard_next_rect'): del self.leaderboard_next_rect
+
+             # Page Text
+             p_txt = self.fonts["body_sm"].render(f"Page {page + 1}", True, COLORS["text_dim"])
+             self.screen.blit(p_txt, p_txt.get_rect(center=(center_x, page_y)))
+             
+             # Prev Button
+             if page > 0:
+                 txt = self.fonts["body_sm"].render("< Prev", True, COLORS["accent"])
+                 rect = txt.get_rect(center=(center_x - 80, page_y))
+                 self.leaderboard_prev_rect = rect 
+                 
+                 if rect.collidepoint(pygame.mouse.get_pos()):
+                     txt = self.fonts["body_sm"].render("< Prev", True, COLORS["accent_glow"])
+                     pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+                 self.screen.blit(txt, rect)
+             
+             # Next Button
+             # If we have full page, assume more exist
+             if len(self.leaderboard_data) >= limit:
+                 txt = self.fonts["body_sm"].render("Next >", True, COLORS["accent"])
+                 rect = txt.get_rect(center=(center_x + 80, page_y))
+                 self.leaderboard_next_rect = rect
+
+                 if rect.collidepoint(pygame.mouse.get_pos()):
+                     txt = self.fonts["body_sm"].render("Next >", True, COLORS["accent_glow"])
+                     pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+                 self.screen.blit(txt, rect)
     
     def render_playing(self, dt):
         """Render game playing state."""
@@ -1947,9 +2284,12 @@ class JutsuAcademy:
                             jutsu_data = self.jutsu_list[jutsu_name]
                             effect = jutsu_data.get("effect")
                             
-                            # Play jutsu-specific sound
+                            # Schedule jutsu-specific sound (0.5s delay)
                             if jutsu_name in self.sounds:
-                                self.play_sound(jutsu_name)
+                                self.pending_sound = {
+                                    "name": jutsu_name,
+                                    "time": time.time() + 0.5
+                                }
                             
                             # Start effect based on type
                             if effect == "fire":
@@ -1997,18 +2337,34 @@ class JutsuAcademy:
         # Fire particles
         self.fire_particles.render(self.screen)
         
+        # Sound Scheduler
+        if hasattr(self, "pending_sound") and self.pending_sound:
+             if time.time() >= self.pending_sound["time"]:
+                 self.play_sound(self.pending_sound["name"])
+                 self.pending_sound = None
+        
         # Video overlay (for Chidori, Rasengan, etc.)
         if self.current_video and self.video_cap and self.video_cap.isOpened():
             ret, vid_frame = self.video_cap.read()
             if ret:
-                # Resize video to fit camera area
-                vid_frame = cv2.resize(vid_frame, (640, 480))
+                # Track Hand
+                if hasattr(self, 'hand_pos') and self.hand_pos:
+                    hx, hy = self.hand_pos
+                    size = 250 # Smaller effect on hand
+                else:
+                    hx, hy = 320, 240
+                    size = 300 # Center if no hand
+                
+                # Resize video
+                vid_frame = cv2.resize(vid_frame, (size, size))
                 vid_frame = cv2.cvtColor(vid_frame, cv2.COLOR_BGR2RGB)
                 vid_frame = np.rot90(vid_frame)
                 vid_frame = np.flipud(vid_frame)
                 vid_surface = pygame.surfarray.make_surface(vid_frame)
                 vid_surface.set_alpha(200)  # Semi-transparent overlay
-                self.screen.blit(vid_surface, (cam_x, cam_y))
+                
+                # Blit centered on hand
+                self.screen.blit(vid_surface, (cam_x + hx - size//2, cam_y + hy - size//2))
             else:
                 # Video ended, loop it
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -2148,40 +2504,53 @@ class JutsuAcademy:
                 # Quit
                 if hasattr(self, 'quit_confirm_rect') and self.quit_confirm_rect.collidepoint(mouse_pos):
                     # Do NOT call cleanup() here, let the loop finish
+                    self.play_sound("click")
                     self.running = False
                 # Stay
                 if hasattr(self, 'quit_cancel_rect') and self.quit_cancel_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     self.state = self.prev_state if self.prev_state else GameState.MENU
         
         elif self.state == GameState.LOGOUT_CONFIRM:
             if mouse_click:
                 # Yes, Logout and Quit
                 if hasattr(self, 'logout_confirm_rect') and self.logout_confirm_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     self.logout_discord()
                     self.profile_dropdown_open = False
                     self.running = False # Quit game on logout as requested
                 # Cancel
                 if hasattr(self, 'logout_cancel_rect') and self.logout_cancel_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     self.state = GameState.MENU
                     
         elif self.state == GameState.WELCOME_MODAL:
             if mouse_click:
                 if hasattr(self, 'welcome_ok_rect') and self.welcome_ok_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     self.state = GameState.MENU
                     # Optionally go to practice if that was pending
                     if self.pending_action == "practice":
                         self.state = GameState.PRACTICE_SELECT
                         self.pending_action = None
+                        
+        elif self.state == GameState.CONNECTION_LOST:
+            if mouse_click:
+                if hasattr(self, 'conn_lost_exit_rect') and self.conn_lost_exit_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
+                    self.running = False
 
         elif self.state == GameState.MENU:
             # Check mute button click
             if mouse_click and self.mute_button_rect.collidepoint(mouse_pos):
+                self.play_sound("click")
                 self.toggle_mute()
             
             # Check social links
             if mouse_click and hasattr(self, 'social_rects'):
                 for link_name, rect in self.social_rects.items():
                     if rect.collidepoint(mouse_pos):
+                        self.play_sound("click")
                         url = SOCIAL_LINKS.get(link_name)
                         if url:
                             webbrowser.open(url)
@@ -2191,6 +2560,7 @@ class JutsuAcademy:
                 if self.profile_dropdown_open:
                     # Check logout click
                     if hasattr(self, 'logout_item_rect') and self.logout_item_rect.collidepoint(mouse_pos):
+                        self.play_sound("click")
                         self.state = GameState.LOGOUT_CONFIRM
                         self.profile_dropdown_open = False
                     # Close dropdown if clicked outside
@@ -2199,6 +2569,7 @@ class JutsuAcademy:
                 
                 # Toggle dropdown on profile click (if logged in)
                 if hasattr(self, 'profile_rect') and self.profile_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     if self.discord_user:
                         self.profile_dropdown_open = not self.profile_dropdown_open
                     else:
@@ -2209,7 +2580,7 @@ class JutsuAcademy:
 
             # Menu buttons
             for name, btn in self.menu_buttons.items():
-                if btn.update(mouse_pos, mouse_click, mouse_down):
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "practice":
                         # Check login requirement
                         if not self.discord_user:
@@ -2229,6 +2600,7 @@ class JutsuAcademy:
         elif self.state == GameState.LOGIN_MODAL:
             if mouse_click:
                 if hasattr(self, 'modal_login_rect') and self.modal_login_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     if self.login_in_progress:
                         # Reopen browser - same server will receive callback
                         if self.discord_auth_url:
@@ -2242,6 +2614,7 @@ class JutsuAcademy:
                 
                 # Cancel button
                 if hasattr(self, 'modal_cancel_rect') and self.modal_cancel_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
                     if self.login_in_progress:
                         # Cancel the login
                         self.cancel_discord_login()
@@ -2261,10 +2634,10 @@ class JutsuAcademy:
                 if not self.is_muted:
                     pygame.mixer.music.set_volume(self.settings_sliders["music"].value)
             
-            self.camera_dropdown.update(mouse_pos, mouse_click)
+            self.camera_dropdown.update(mouse_pos, mouse_click, self.play_sound)
             
             for name, btn in self.settings_buttons.items():
-                if btn.update(mouse_pos, mouse_click, mouse_down):
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "back":
                         # Save settings
                         self.settings["music_vol"] = self.settings_sliders["music"].value
@@ -2278,17 +2651,74 @@ class JutsuAcademy:
         
         elif self.state == GameState.PRACTICE_SELECT:
             for name, btn in self.practice_buttons.items():
-                if btn.update(mouse_pos, mouse_click, mouse_down):
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "freeplay":
                         self.start_game("practice")
                     elif name == "challenge":
                         self.start_game("challenge")
+                    elif name == "leaderboard":
+                        self.state = GameState.LEADERBOARD
+                        # Trigger fetch
+                        threading.Thread(target=self._fetch_leaderboard, daemon=True).start()
                     elif name == "back":
                         self.state = GameState.MENU
         
+        elif self.state == GameState.LEADERBOARD:
+            # Mode Selector Click (Arrows)
+            clicked_dir = 0
+            if mouse_click:
+                if hasattr(self, 'mode_arrow_left_rect') and self.mode_arrow_left_rect.collidepoint(mouse_pos):
+                    clicked_dir = -1
+                elif hasattr(self, 'mode_arrow_right_rect') and self.mode_arrow_right_rect.collidepoint(mouse_pos):
+                    clicked_dir = 1
+            
+            if clicked_dir != 0:
+                self.play_sound("click")
+                
+                # Get modes
+                if not hasattr(self, "leaderboard_modes_list"):
+                    try:
+                        self.leaderboard_modes_list = [k.upper() for k in OFFICIAL_JUTSUS.keys()]
+                    except:
+                        self.leaderboard_modes_list = ["FIREBALL", "CHIDORI", "SHARINGAN", "RASENGAN"]
+                        
+                # Cycle
+                curr = getattr(self, "leaderboard_mode", "FIREBALL")
+                try:
+                    idx = self.leaderboard_modes_list.index(curr)
+                    new_idx = (idx + clicked_dir) % len(self.leaderboard_modes_list)
+                    self.leaderboard_mode = self.leaderboard_modes_list[new_idx]
+                except:
+                    self.leaderboard_mode = self.leaderboard_modes_list[0]
+                    
+                # Refetch
+                threading.Thread(target=self._fetch_leaderboard, daemon=True).start()
+
+            # Pagination Clicks
+            if mouse_click:
+                page_changed = False
+                if hasattr(self, 'leaderboard_prev_rect') and self.leaderboard_prev_rect.collidepoint(mouse_pos):
+                    self.leaderboard_page = max(0, getattr(self, 'leaderboard_page', 0) - 1)
+                    page_changed = True
+                    self.play_sound("click")
+                elif hasattr(self, 'leaderboard_next_rect') and self.leaderboard_next_rect.collidepoint(mouse_pos):
+                    self.leaderboard_page = getattr(self, 'leaderboard_page', 0) + 1
+                    page_changed = True
+                    self.play_sound("click")
+                
+                if page_changed:
+                    threading.Thread(target=self._fetch_leaderboard, daemon=True).start()
+
+            for name, btn in self.leaderboard_buttons.items():
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
+                    if name == "back":
+                        self.state = GameState.PRACTICE_SELECT
+                    elif name == "refresh":
+                        threading.Thread(target=self._fetch_leaderboard, daemon=True).start()
+        
         elif self.state == GameState.ABOUT:
             for name, btn in self.about_buttons.items():
-                if btn.update(mouse_pos, mouse_click, mouse_down):
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "back":
                         self.state = GameState.MENU
         
@@ -2326,6 +2756,8 @@ class JutsuAcademy:
                 self.render_practice_select()
             elif self.state == GameState.ABOUT:
                 self.render_about()
+            elif self.state == GameState.LEADERBOARD:
+                self.render_leaderboard()
             elif self.state == GameState.LOADING:
                 self._render_loading()
             elif self.state == GameState.PLAYING:
@@ -2350,13 +2782,21 @@ class JutsuAcademy:
                     self.render_menu()
                 self.render_quit_confirm()
             elif self.state == GameState.WELCOME_MODAL:
-                # Render underlying state first
-                self.render_menu()
+                # Render underlying background only (cleaner)
+                if hasattr(self, 'background') and self.background:
+                    # Scale to fit if needed
+                    self.screen.blit(self.background, (0, 0))
+                else:
+                    self.screen.fill(COLORS["bg_dark"])
                 self.render_welcome_modal()
             elif self.state == GameState.LOGOUT_CONFIRM:
                 # Render underlying state first
                 self.render_menu()
                 self.render_logout_confirm()
+            elif self.state == GameState.CONNECTION_LOST:
+                # Render underlying state first (to look like an overlay)
+                self.render_menu()
+                self.render_connection_lost()
             
             pygame.display.flip()
         

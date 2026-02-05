@@ -166,7 +166,7 @@ class NetworkManager:
         
         return role
 
-    def get_leaderboard(self, limit=50, mode="Fireball"):
+    def get_leaderboard(self, limit=10, offset=0, mode="Fireball"):
         """Fetch top scores filtered by Jutsu (mode)"""
         if not self.client: return []
         try:
@@ -175,7 +175,7 @@ class NetworkManager:
                 .select('*')\
                 .eq('mode', mode)\
                 .order('score_time', desc=False)\
-                .limit(limit)\
+                .range(offset, offset + limit - 1)\
                 .execute()
             return response.data
         except Exception as e:
