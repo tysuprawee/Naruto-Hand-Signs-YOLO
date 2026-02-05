@@ -3,6 +3,7 @@ import webbrowser
 import requests
 import threading
 import logging
+import secrets
 from flask import Flask, request
 from werkzeug.serving import make_server
 
@@ -480,31 +481,57 @@ class DiscordLogin:
     """
 
 
-    def login(self):
-        """Starts the local server and opens the browser for auth."""
-        print("[*] Starting Discord Login Flow...")
+    def get_authorize_url(self):
+        """Generate and return the OAuth authorization URL with random state."""
+        state = secrets.token_urlsafe(16)  # Random state to prevent caching
+        return (f"https://discord.com/api/oauth2/authorize?client_id={self.client_id}"
+                f"&redirect_uri={self.redirect_uri}&response_type=code&scope=identify&state={state}")
+
+    def login(self, timeout=120):
+        """Starts the local server and waits for auth callback.
+        
+        Args:
+            timeout: Maximum seconds to wait for auth (default 120)
+            
+        Returns:
+            User info dict on success, None on timeout/failure
+        """
+        print(f"[AUTH] Starting Discord Login Flow (timeout={timeout}s)...")
         try:
             # Start server in thread
-            self.server = make_server('localhost', 5000, self.app)
+            self.server = make_server('localhost', 5000, self.app, threaded=True)
             self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self.thread.start()
+            print("[AUTH] Local callback server started on port 5000")
             
-            # Open Browser
-            auth_url = (f"https://discord.com/api/oauth2/authorize?client_id={self.client_id}"
-                        f"&redirect_uri={self.redirect_uri}&response_type=code&scope=identify")
-            webbrowser.open(auth_url)
+            # Wait for auth with timeout
+            print("[AUTH] Waiting for user to authorize in browser...")
+            auth_completed = self.auth_event.wait(timeout=timeout)
             
-            # Wait for auth
-            print("[*] Waiting for user to authorize in browser...")
-            self.auth_event.wait(timeout=120) # 2 minute timeout
+            if not auth_completed:
+                print(f"[AUTH] Timeout after {timeout}s waiting for callback")
+                return None
             
         except Exception as e:
-            print(f"[!] Discord Login Error: {e}")
+            print(f"[AUTH] Discord Login Error: {e}")
+            return None
         finally:
-            if self.server:
-                self.server.shutdown()
+            self.shutdown()
                 
         return self.user_info
+
+    def shutdown(self):
+        """Shutdown the local server."""
+        if self.server:
+            def shutdown_server(srv):
+                try:
+                    srv.shutdown()
+                    print("[AUTH] Callback server shut down")
+                except:
+                    pass
+            
+            threading.Thread(target=shutdown_server, args=(self.server,), daemon=True).start()
+            self.server = None
 
     def exchange_code(self, code):
         data = {
