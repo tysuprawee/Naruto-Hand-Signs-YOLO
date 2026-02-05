@@ -216,6 +216,26 @@ class NetworkManager:
         except Exception as e:
             print(f"[!] Score submission failed: {e}")
 
+    def get_profile(self, username):
+        """Fetch player profile/progression from DB"""
+        if not self.client: return None
+        try:
+            response = self.client.table('profiles').select('*').eq('username', username).execute()
+            if response.data:
+                return response.data[0]
+        except Exception as e:
+            print(f"[!] Profile fetch failed: {e}")
+        return None
+
+    def upsert_profile(self, data):
+        """Update or Insert player progression"""
+        if not self.client: return
+        try:
+            # We use username as the conflict target
+            self.client.table('profiles').upsert(data, on_conflict='username').execute()
+        except Exception as e:
+            print(f"[!] Profile sync failed: {e}")
+
 if __name__ == "__main__":
     nm = NetworkManager()
     print(f"URL: {nm.url}")

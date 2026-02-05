@@ -286,6 +286,8 @@ class Button:
         text_surf = self.font.render(self.text, True, text_color)
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
+        
+
 
 
 class Slider:
@@ -347,6 +349,8 @@ class Slider:
         knob_x = self.x + fill_width
         pygame.draw.circle(surface, COLORS["text"], (knob_x, self.y + 5), 12)
         pygame.draw.circle(surface, COLORS["accent"], (knob_x, self.y + 5), 8)
+        
+
 
 
 class Dropdown:
@@ -411,6 +415,12 @@ class Dropdown:
                 
                 text = self.font.render(opt, True, COLORS["text"])
                 surface.blit(text, (self.x + 15, opt_rect.y + 10))
+                
+                # DEBUG: Hitbox
+                pygame.draw.rect(surface, (255, 0, 0), opt_rect, 1)
+        
+        # DEBUG: Hitbox
+        pygame.draw.rect(surface, (255, 0, 0), self.rect, 1)
 
 class Checkbox:
     def __init__(self, x, y, size, label, initial=False):
@@ -443,11 +453,149 @@ class Checkbox:
         # Label
         label_surf = self.font.render(self.label, True, COLORS["text"])
         surface.blit(label_surf, (self.rect.right + 10, self.rect.y + (self.size - 24)//2 + 4))
+        
+
 
     def get_selected(self):
         if self.options and 0 <= self.selected_idx < len(self.options):
             return self.options[self.selected_idx]
         return None
+
+class ProgressionManager:
+    """Handles the 'Shinobi Path' progression system including XP, Levels, and Ranks."""
+    def __init__(self, username="Guest", network_manager=None):
+        self.username = username
+        self.network_manager = network_manager
+        # Unique file per user if logged in
+        safe_name = "".join(x for x in username if x.isalnum())
+        self.file_path = Path(f"user_progression_{safe_name}.json")
+        
+        self.xp = 0
+        self.level = 0
+        self.rank = "Academy Student"
+        self.stats = {
+            "total_signs": 0,
+            "total_jutsus": 0,
+            "fastest_combo": 99.0
+        }
+        
+        # Level requirements and Rank names
+        self.RANKS = [
+            (0, "Academy Student"),
+            (5, "Genin Candidate"),
+            (10, "Genin"),
+            (25, "Chunin Candidate"),
+            (50, "Chunin"),
+            (100, "Special Jonin"),
+            (250, "Jonin"),
+            (500, "ANBU Black Ops"),
+            (1000, "S-Rank Shinobi"),
+            (2500, "Sanin"),
+            (5000, "Hokage Candidate"),
+            (10000, "HOKAGE")
+        ]
+        
+        self.load()
+        # If logged in (not Guest), try to fetch latest from cloud
+        if self.username != "Guest" and self.network_manager:
+            threading.Thread(target=self.sync_from_cloud, daemon=True).start()
+
+    def sync_from_cloud(self):
+        """Fetch latest XP and Level from Supabase."""
+        if not self.network_manager: return
+        profile = self.network_manager.get_profile(self.username)
+        if profile:
+            # Only update if cloud has MORE XP than local (prevents overwriting newer local progress)
+            if profile.get("xp", 0) > self.xp:
+                self.xp = profile["xp"]
+                self.level = profile.get("level", 0)
+                self.rank = profile.get("rank", "Academy Student")
+                self.update_rank()
+                self.save() # Update local cache
+                print(f"[*] Cloud Sync Success: Restored Lv.{self.level} progression for {self.username}")
+        else:
+            # No cloud profile found -> This is a new user (or offline progress to sync up)
+            print(f"[*] New cloud user: Creating profile for {self.username}")
+            # We call the internal DB function directly to avoid spawning another thread from within this thread
+            data = {
+                "username": self.username,
+                "xp": self.xp,
+                "level": self.level,
+                "rank": self.rank,
+                "total_signs": self.stats["total_signs"],
+                "total_jutsus": self.stats["total_jutsus"]
+            }
+            self.network_manager.upsert_profile(data)
+
+    def sync_to_cloud(self):
+        """Push current progression to Supabase."""
+        if not self.network_manager or self.username == "Guest": return
+        data = {
+            "username": self.username,
+            "xp": self.xp,
+            "level": self.level,
+            "rank": self.rank,
+            "total_signs": self.stats["total_signs"],
+            "total_jutsus": self.stats["total_jutsus"]
+        }
+        # Run in thread to not block UI
+        threading.Thread(target=self.network_manager.upsert_profile, args=(data,), daemon=True).start()
+
+    def get_xp_for_level(self, level):
+        """Standard quadratic scaling."""
+        if level <= 0: return 0
+        return int(pow(level, 1.8) * 150) # Scale: L1=150, L5=2715...
+
+    def get_next_level_xp(self):
+        return self.get_xp_for_level(self.level + 1)
+
+    def add_xp(self, amount):
+        old_level = self.level
+        self.xp += amount
+        self.stats["total_jutsus"] += 1
+        
+        # Level up check
+        while self.xp >= self.get_xp_for_level(self.level + 1):
+            self.level += 1
+            self.update_rank()
+            
+        is_level_up = self.level > old_level
+        if is_level_up:
+             print(f"[!] SHINOBI RANK UP: Level {self.level} - {self.rank}")
+             
+        self.save()
+        self.sync_to_cloud() # Push update to DB
+        return is_level_up
+
+    def update_rank(self):
+        for lv, name in reversed(self.RANKS):
+            if self.level >= lv:
+                self.rank = name
+                break
+
+    def save(self):
+        try:
+            data = {
+                "xp": self.xp,
+                "level": self.level,
+                "rank": self.rank,
+                "stats": self.stats
+            }
+            with open(self.file_path, "w") as f:
+                json.dump(data, f, indent=4)
+        except: pass
+
+    def load(self):
+        if self.file_path.exists():
+            try:
+                with open(self.file_path, "r") as f:
+                    data = json.load(f)
+                    self.xp = data.get("xp", 0)
+                    self.level = data.get("level", 0)
+                    self.rank = data.get("rank", "Academy Student")
+                    self.stats = data.get("stats", self.stats)
+                    self.update_rank()
+            except: pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -465,8 +613,10 @@ class GameState:
     QUIT_CONFIRM = "quit_confirm" # Modal to confirm exit
     WELCOME_MODAL = "welcome_modal" # Modal to show after login success
     LOGOUT_CONFIRM = "logout_confirm" # Modal to confirm logout
+    LOGOUT_CONFIRM = "logout_confirm" # Modal to confirm logout
     CONNECTION_LOST = "connection_lost" # Modal when internet drops
     LEADERBOARD = "leaderboard" # Leaderboard screen
+    ERROR_MODAL = "error_modal" # Generic error modal (e.g. Camera fail)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -552,6 +702,10 @@ class JutsuAcademy:
         self.leaderboard_data = []
         self.leaderboard_loading = False
         self.leaderboard_avatars = {} # Cache for rounded surfaces
+
+        # Progression System (Shinobi Path)
+        self.progression = ProgressionManager(self.username, network_manager=self.network_manager)
+        self.xp_popups = [] # List of {"text": str, "x": int, "y": int, "timer": float, "color": tuple}
         
         # Announcements
         self.announcements = []
@@ -1091,6 +1245,8 @@ class JutsuAcademy:
             if user:
                 self.discord_user = user
                 self.username = user.get("username", "User")
+                self.progression = ProgressionManager(self.username, network_manager=self.network_manager) # Reload for new user
+                self._save_user_session()
                 self._save_user_session()
                 threading.Thread(target=self._load_discord_avatar, daemon=True).start()
                 print(f"[AUTH][attempt={attempt_id}] Success: {self.username}")
@@ -1125,6 +1281,9 @@ class JutsuAcademy:
         """Log out Discord user."""
         self.discord_user = None
         self.username = "Guest"
+        self.username = "Guest"
+        self.progression = ProgressionManager(self.username, network_manager=self.network_manager) # Reset to guest progress
+        self.user_avatar = None
         self.user_avatar = None
         # Delete session file
         try:
@@ -1247,7 +1406,12 @@ class JutsuAcademy:
             self.cap.release()
         
         cam_idx = self.settings["camera_idx"]
-        self.cap = cv2.VideoCapture(cam_idx)
+        # Use DirectShow on Windows for better compatibility
+        if os.name == 'nt':
+            self.cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+        else:
+            self.cap = cv2.VideoCapture(cam_idx)
+            
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
@@ -1296,7 +1460,10 @@ class JutsuAcademy:
         
         if not self._start_camera():
             print("[-] Failed to open camera!")
-            self.state = GameState.MENU
+            # Show dedicated error modal
+            self.error_title = "Camera Error"
+            self.error_message = "Could not access camera.\nPlease check if OBS, Discord, or another app is using it."
+            self.state = GameState.ERROR_MODAL 
             return
         
         # Reset state
@@ -1346,6 +1513,12 @@ class JutsuAcademy:
         dots = "." * (int(time.time() * 2) % 4)
         dots_surf = self.fonts["body"].render(dots, True, COLORS["text_dim"])
         self.screen.blit(dots_surf, (status_rect.right + 5, status_rect.y))
+
+    def _draw_text_center(self, text, y_offset=0, color=(255, 255, 255)):
+        """Helper to draw centered text."""
+        surf = self.fonts["title_md"].render(text, True, color)
+        rect = surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + y_offset))
+        self.screen.blit(surf, rect)
     
     def stop_game(self):
         """Stop the game and return to menu."""
@@ -1621,6 +1794,8 @@ class JutsuAcademy:
                 else:
                     icon_sm = pygame.transform.smoothscale(icon, (32, 32))
                     self.screen.blit(icon_sm, (x+4, social_y+4))
+            
+
         
         # 6. Mute Button (Bottom Right)
         self.mute_button_rect = pygame.Rect(SCREEN_WIDTH - 60, SCREEN_HEIGHT - 60, 40, 40)
@@ -1649,6 +1824,8 @@ class JutsuAcademy:
         else:
             txt = self.fonts["icon"].render(sym, True, color)
             self.screen.blit(txt, (self.mute_button_rect.x+5, self.mute_button_rect.y+5))
+            
+
 
         # Version (Bottom Right, above mute)
         version = self.fonts["tiny"].render(f"v{APP_VERSION}", True, (255, 255, 255, 100))
@@ -1664,6 +1841,8 @@ class JutsuAcademy:
         pygame.draw.rect(profile_surf, bg_color, profile_surf.get_rect(), border_radius=12)
         pygame.draw.rect(profile_surf, (255, 255, 255, 30), profile_surf.get_rect(), 1, border_radius=12)
         self.screen.blit(profile_surf, self.profile_rect)
+        
+
         
         # Avatar
         if self.user_avatar:
@@ -1721,6 +1900,8 @@ class JutsuAcademy:
                 any_hovered = True
                 
             self.screen.blit(logout_txt, (dd_rect.x + 20, dd_rect.y + 15))
+            
+
 
         # Cursor update
         if any_button_hovered or any_social_hovered or any_hovered:
@@ -1804,6 +1985,8 @@ class JutsuAcademy:
             login_txt = self.fonts["body_sm"].render("Reopen Browser", True, (255, 255, 255))
             self.screen.blit(login_txt, login_txt.get_rect(center=self.modal_login_rect.center))
             
+
+            
             # Cancel Button
             self.modal_cancel_rect = pygame.Rect(modal_x + modal_w - 50 - btn_w, btn_y, btn_w, btn_h)
             cancel_hover = self.modal_cancel_rect.collidepoint(mouse_pos)
@@ -1813,6 +1996,8 @@ class JutsuAcademy:
             
             cancel_txt = self.fonts["body_sm"].render("Cancel Login", True, COLORS["text"])
             self.screen.blit(cancel_txt, cancel_txt.get_rect(center=self.modal_cancel_rect.center))
+            
+
         else:
             # Show "Login with Discord" and "Cancel" buttons
             self.modal_login_rect = pygame.Rect(modal_x + 50, btn_y, btn_w, btn_h)
@@ -1824,6 +2009,8 @@ class JutsuAcademy:
             login_txt = self.fonts["body_sm"].render("Login with Discord", True, (255, 255, 255))
             self.screen.blit(login_txt, login_txt.get_rect(center=self.modal_login_rect.center))
             
+
+            
             # Cancel Button
             self.modal_cancel_rect = pygame.Rect(modal_x + modal_w - 50 - btn_w, btn_y, btn_w, btn_h)
             cancel_hover = self.modal_cancel_rect.collidepoint(mouse_pos)
@@ -1834,6 +2021,8 @@ class JutsuAcademy:
             
             cancel_txt = self.fonts["body_sm"].render("Cancel", True, COLORS["text"])
             self.screen.blit(cancel_txt, cancel_txt.get_rect(center=self.modal_cancel_rect.center))
+            
+
         
         if login_hover or cancel_hover:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
@@ -1889,6 +2078,8 @@ class JutsuAcademy:
         quit_txt = self.fonts["body_sm"].render("Yes, Quit", True, (255, 255, 255))
         self.screen.blit(quit_txt, quit_txt.get_rect(center=self.quit_confirm_rect.center))
         
+
+        
         # Stay Button (Green/Blue/Neutral)
         self.quit_cancel_rect = pygame.Rect(modal_x + modal_w - 60 - btn_w, btn_y, btn_w, btn_h)
         cancel_hover = self.quit_cancel_rect.collidepoint(mouse_pos)
@@ -1899,6 +2090,8 @@ class JutsuAcademy:
         
         cancel_txt = self.fonts["body_sm"].render("Stay", True, COLORS["text"])
         self.screen.blit(cancel_txt, cancel_txt.get_rect(center=self.quit_cancel_rect.center))
+        
+
         
         if quit_hover or cancel_hover:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
@@ -1911,14 +2104,16 @@ class JutsuAcademy:
         self.screen.blit(overlay, (0, 0))
         
         # 2. Modal Box - Glassmorphism style
-        modal_w, modal_h = 500, 320
+        modal_w, modal_h = 520, 380
         modal_x = (SCREEN_WIDTH - modal_w) // 2
         modal_y = (SCREEN_HEIGHT - modal_h) // 2
         modal_rect = pygame.Rect(modal_x, modal_y, modal_w, modal_h)
         
         # Panel Shadow/Glow
         shadow_surf = pygame.Surface((modal_w + 40, modal_h + 40), pygame.SRCALPHA)
-        pygame.draw.rect(shadow_surf, (0, 255, 0, 20), shadow_surf.get_rect(), border_radius=30)
+        # Use theme success color for glow, but transparent
+        glow_color = (*COLORS["success"], 40) 
+        pygame.draw.rect(shadow_surf, glow_color, shadow_surf.get_rect(), border_radius=30)
         self.screen.blit(shadow_surf, (modal_x - 20, modal_y - 20))
 
         # Background (Dark semi-transparent)
@@ -1930,36 +2125,36 @@ class JutsuAcademy:
         # Avatar (Large)
         avatar_y_center = modal_y + 80
         if self.user_avatar:
-            # Scale avatar up
-            scaled_avatar = pygame.transform.smoothscale(self.user_avatar, (100, 100))
+            # Scale avatar up nicely
+            scaled_avatar = pygame.transform.smoothscale(self.user_avatar, (110, 110))
             avatar_rect = scaled_avatar.get_rect(center=(modal_x + modal_w//2, avatar_y_center))
             
             # Draw glow behind avatar
-            pygame.draw.circle(self.screen, (0, 255, 0, 40), avatar_rect.center, 60)
+            pygame.draw.circle(self.screen, glow_color, avatar_rect.center, 65)
             
             # Draw circle mask/border
-            pygame.draw.circle(self.screen, COLORS["success"], avatar_rect.center, 52)
-            pygame.draw.circle(self.screen, (0,0,0), avatar_rect.center, 50) # Black border
+            pygame.draw.circle(self.screen, COLORS["success"], avatar_rect.center, 57) # Outer ring
+            pygame.draw.circle(self.screen, (20, 20, 20), avatar_rect.center, 55) # Inner border
             self.screen.blit(scaled_avatar, avatar_rect)
         else:
              # Default icon if no avatar
-             pygame.draw.circle(self.screen, COLORS["bg_card"], (modal_x + modal_w//2, avatar_y_center), 50)
-             pygame.draw.circle(self.screen, COLORS["success"], (modal_x + modal_w//2, avatar_y_center), 52, 2)
+             pygame.draw.circle(self.screen, COLORS["bg_card"], (modal_x + modal_w//2, avatar_y_center), 55)
+             pygame.draw.circle(self.screen, COLORS["success"], (modal_x + modal_w//2, avatar_y_center), 57, 2)
         
-        # Title
+        # Title - moved down to avoid overlap
         username = self.username if self.username else "Shinobi"
         title = self.fonts["title_md"].render(f"WELCOME, {username.upper()}", True, (255, 255, 255))
-        title_rect = title.get_rect(center=(modal_x + modal_w//2, avatar_y_center + 70))
+        title_rect = title.get_rect(center=(modal_x + modal_w//2, avatar_y_center + 90)) # Gap increased
         self.screen.blit(title, title_rect)
         
         # Message
         msg = self.fonts["body"].render("Access Granted. Academy protocols initialized.", True, COLORS["success"])
-        msg_rect = msg.get_rect(center=(modal_x + modal_w//2, title_rect.bottom + 25))
+        msg_rect = msg.get_rect(center=(modal_x + modal_w//2, title_rect.bottom + 30))
         self.screen.blit(msg, msg_rect)
             
         # Continue Button
         btn_w, btn_h = 240, 60
-        btn_y = modal_y + modal_h - 80
+        btn_y = modal_y + modal_h - 90
         mouse_pos = pygame.mouse.get_pos()
         
         self.welcome_ok_rect = pygame.Rect(modal_x + (modal_w - btn_w)//2, btn_y, btn_w, btn_h)
@@ -1967,13 +2162,71 @@ class JutsuAcademy:
         
         # Button Glow
         if ok_hover:
-             pygame.draw.rect(self.screen, (0, 255, 0), self.welcome_ok_rect.inflate(4, 4), border_radius=12)
+             border_glow = (*COLORS["success"], 100)
+             pygame.draw.rect(self.screen, border_glow, self.welcome_ok_rect.inflate(6, 6), border_radius=12)
         
-        color = (0, 180, 0) if ok_hover else (0, 100, 0)
-        pygame.draw.rect(self.screen, color, self.welcome_ok_rect, border_radius=10)
+        btn_color = COLORS["success"] if ok_hover else (30, 120, 70) # Darker green normally
+        pygame.draw.rect(self.screen, btn_color, self.welcome_ok_rect, border_radius=10)
         
         ok_txt = self.fonts["title_sm"].render("ENTER ACADEMY", True, (255, 255, 255))
         self.screen.blit(ok_txt, ok_txt.get_rect(center=self.welcome_ok_rect.center))
+        
+        if ok_hover:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+
+    def render_error_modal(self):
+        """Render a generic error modal."""
+        # 1. Dark overlay
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 220))
+        self.screen.blit(overlay, (0, 0))
+        
+        # 2. Modal Box
+        modal_w, modal_h = 550, 300
+        modal_x = (SCREEN_WIDTH - modal_w) // 2
+        modal_y = (SCREEN_HEIGHT - modal_h) // 2
+        modal_rect = pygame.Rect(modal_x, modal_y, modal_w, modal_h)
+        
+        # Shadow
+        shadow_rect = modal_rect.copy()
+        shadow_rect.inflate_ip(4, 4)
+        shadow_rect.y += 4
+        pygame.draw.rect(self.screen, (0, 0, 0, 100), shadow_rect, border_radius=16)
+        
+        # Background
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], modal_rect, border_radius=16)
+        pygame.draw.rect(self.screen, COLORS["error"], modal_rect, 2, border_radius=16) # Red border for error
+        
+        # Title
+        title_text = getattr(self, "error_title", "Error")
+        title = self.fonts["title_sm"].render(title_text, True, COLORS["error"])
+        title_rect = title.get_rect(center=(modal_x + modal_w//2, modal_y + 50))
+        self.screen.blit(title, title_rect)
+        
+        # Message (multiline support)
+        msg_text = getattr(self, "error_message", "An unexpected error occurred.")
+        lines = msg_text.split('\n')
+        
+        start_msg_y = modal_y + 100
+        for i, line in enumerate(lines):
+            line_surf = self.fonts["body_sm"].render(line, True, COLORS["text"])
+            line_rect = line_surf.get_rect(center=(modal_x + modal_w//2, start_msg_y + i*30))
+            self.screen.blit(line_surf, line_rect)
+            
+        # Back Button
+        btn_w, btn_h = 160, 50
+        btn_y = modal_y + modal_h - 80
+        mouse_pos = pygame.mouse.get_pos()
+        
+        self.error_ok_rect = pygame.Rect(modal_x + (modal_w - btn_w)//2, btn_y, btn_w, btn_h)
+        ok_hover = self.error_ok_rect.collidepoint(mouse_pos)
+        
+        color = COLORS["bg_hover"] if ok_hover else COLORS["bg_card"]
+        pygame.draw.rect(self.screen, color, self.error_ok_rect, border_radius=8)
+        pygame.draw.rect(self.screen, COLORS["border"], self.error_ok_rect, 1, border_radius=8)
+        
+        ok_txt = self.fonts["body_sm"].render("Back to Menu", True, COLORS["text"])
+        self.screen.blit(ok_txt, ok_txt.get_rect(center=self.error_ok_rect.center))
         
         if ok_hover:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
@@ -2029,6 +2282,8 @@ class JutsuAcademy:
         logout_txt = self.fonts["body_sm"].render("Sign Out", True, (255, 255, 255))
         self.screen.blit(logout_txt, logout_txt.get_rect(center=self.logout_confirm_rect.center))
         
+
+        
         # Cancel Button
         self.logout_cancel_rect = pygame.Rect(modal_x + modal_w - 60 - btn_w, btn_y, btn_w, btn_h)
         cancel_hover = self.logout_cancel_rect.collidepoint(mouse_pos)
@@ -2039,6 +2294,8 @@ class JutsuAcademy:
         
         cancel_txt = self.fonts["body_sm"].render("Cancel", True, COLORS["text"])
         self.screen.blit(cancel_txt, cancel_txt.get_rect(center=self.logout_cancel_rect.center))
+        
+
         
         if logout_hover or cancel_hover:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
@@ -2478,6 +2735,8 @@ class JutsuAcademy:
             if self.ann_prev_rect.collidepoint(pygame.mouse.get_pos()):
                  txt = self.fonts["body_sm"].render("< Prev", True, COLORS["accent"])
             self.screen.blit(txt, self.ann_prev_rect)
+            
+
         elif hasattr(self, 'ann_prev_rect'): del self.ann_prev_rect
             
         # Next
@@ -2487,6 +2746,8 @@ class JutsuAcademy:
             if self.ann_next_rect.collidepoint(pygame.mouse.get_pos()):
                  txt = self.fonts["body_sm"].render("Next >", True, COLORS["accent"])
             self.screen.blit(txt, self.ann_next_rect)
+            
+
         elif hasattr(self, 'ann_next_rect'): del self.ann_next_rect
             
         # Close (Only on last page)
@@ -2498,6 +2759,8 @@ class JutsuAcademy:
             if self.ann_close_rect.collidepoint(pygame.mouse.get_pos()):
                  color = (217, 119, 6)
             pygame.draw.rect(self.screen, color, self.ann_close_rect, border_radius=8)
+            
+
             self.screen.blit(close_txt, close_txt.get_rect(center=self.ann_close_rect.center))
         elif hasattr(self, 'ann_close_rect'): 
             del self.ann_close_rect
@@ -2538,6 +2801,8 @@ class JutsuAcademy:
                  l_arrow.set_alpha(150)
              self.screen.blit(l_arrow, l_rect)
              
+
+             
              # Right Arrow
              r_arrow = self.arrow_icons["right"]
              r_rect = r_arrow.get_rect(center=(center_x + 140, y_pos))
@@ -2549,6 +2814,8 @@ class JutsuAcademy:
              else:
                  r_arrow.set_alpha(150)
              self.screen.blit(r_arrow, r_rect)
+             
+
         else:
              # Text fallback
              fallback_surf = self.fonts["body"].render("<  Target  >", True, COLORS["text_dim"])
@@ -2682,9 +2949,10 @@ class JutsuAcademy:
 
                  if rect.collidepoint(pygame.mouse.get_pos()):
                      txt = self.fonts["body_sm"].render("Next >", True, COLORS["accent_glow"])
-                     self.play_sound("click")
                      pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
                  self.screen.blit(txt, rect)
+                
+
     
     # ─── Challenge Mode Helpers ───
     def _render_challenge_lobby(self, cam_x, cam_y):
@@ -2836,10 +3104,15 @@ class JutsuAcademy:
 
     def render_playing(self, dt):
         """Render game playing state with Challenge Mode support."""
-        # 1. Background Logic (Uniform with Main Menu)
+        # 1. Background Logic - Always draw first to clear previous frame
         if hasattr(self, 'bg_image') and self.bg_image:
+             if hasattr(self, 'last_screen_w') and self.last_screen_w != SCREEN_WIDTH:
+                 # Rescale background if screen size changes (simplified check)
+                 self.bg_image = pygame.transform.smoothscale(self.bg_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+                 self.last_screen_w = SCREEN_WIDTH
              self.screen.blit(self.bg_image, (0, 0))
-             # Professional darken overlay to keep focus on camera feed
+             
+             # Professional darken overlay
              overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
              overlay.fill((0, 0, 0, 180)) 
              self.screen.blit(overlay, (0, 0))
@@ -2847,10 +3120,12 @@ class JutsuAcademy:
              self.screen.fill(COLORS["bg_dark"])
         
         if self.cap is None or not self.cap.isOpened():
+            self._draw_text_center("Camera Disconnected", 0, COLORS["error"])
             return
         
         ret, frame = self.cap.read()
         if not ret:
+            self._draw_text_center("Camera blocked! Check OBS/Discord.", 0, COLORS["error"])
             return
         
         # Flip for mirror
@@ -2861,6 +3136,13 @@ class JutsuAcademy:
         if self.game_mode == "challenge":
             if self.challenge_state in ["waiting", "countdown", "results"]:
                 should_detect = False
+                
+        # 1.5 Locked Check (Shinobi Path)
+        current_jutsu_name = self.jutsu_names[self.current_jutsu_idx]
+        min_lv = self.jutsu_list[current_jutsu_name].get("min_level", 0)
+        is_locked = self.progression.level < min_lv
+        if is_locked:
+            should_detect = False
         
         # 2. Detection Flow
         detected = None
@@ -2891,6 +3173,31 @@ class JutsuAcademy:
                             self.current_step = 0
                             self.play_sound("complete")
                             
+                            # Award XP (Robust Progression)
+                            jutsu_name = self.jutsu_names[self.current_jutsu_idx]
+                            seq_len = len(self.jutsu_list[jutsu_name]["sequence"])
+                            bonus = seq_len * 10
+                            total_xp = 50 + bonus # Base 50 + complexity bonus
+                            
+                            is_lv_up = self.progression.add_xp(total_xp)
+                            
+                            # Add XP popup
+                            self.xp_popups.append({
+                                "text": f"+{total_xp} XP", 
+                                "x": cam_x + 320, 
+                                "y": cam_y + 100, 
+                                "timer": 2.0, 
+                                "color": COLORS["accent"]
+                            })
+                            if is_lv_up:
+                                self.xp_popups.append({
+                                    "text": f"RANK UP: {self.progression.rank}!", 
+                                    "x": cam_x + 320, 
+                                    "y": cam_y + 150, 
+                                    "timer": 3.0, 
+                                    "color": COLORS["success"]
+                                })
+                            
                             # STOP TIMER if in challenge
                             if self.game_mode == "challenge":
                                 self.challenge_final_time = self.jutsu_start_time - self.challenge_start_time
@@ -2917,15 +3224,40 @@ class JutsuAcademy:
                                 self.current_video = jutsu_name
                                 print(f"[+] Playing video: {video_path}")
         
-        # Camera position on screen (Lowered for better top margin)
-        cam_x = (SCREEN_WIDTH - 640) // 2
-        cam_y = 110
+        # Camera position on screen (Centered & Scaled)
+        # We want to fill the screen as much as possible while maintaining aspect ratio
+        frame_h, frame_w = frame.shape[:2]
         
-        # Update particles with correct screen position
+        # Calculate Aspect Fill Scale
+        scale_w = SCREEN_WIDTH / frame_w
+        scale_h = SCREEN_HEIGHT / frame_h
+        scale = max(scale_w, scale_h) # Select larger scale to fill
+        
+        # Or, if we want to "Fit" inside a slightly smaller box to see UI:
+        # Let's stick to the request "scale image resolution properly".
+        # A good approach for this app is "Aspect Fit" within a large central area, 
+        # but let's make it cover most of the screen.
+        
+        # Let's target a max height of SCREEN_HEIGHT - 150 (space for HUD)
+        target_h = SCREEN_HEIGHT - 140
+        scale = target_h / frame_h
+        
+        new_w = int(frame_w * scale)
+        new_h = int(frame_h * scale)
+        
+        cam_x = (SCREEN_WIDTH - new_w) // 2
+        cam_y = 110 # Below XP bar
+        
+        # Update particles with correct screen position based on new scale
         if self.fire_particles.emitting and self.mouth_pos:
             # Convert camera frame coords to screen coords
-            screen_x = cam_x + self.mouth_pos[0]
-            screen_y = cam_y + self.mouth_pos[1]
+            # Landmark coords are normalized (0-1), multiplied by frame size in detect methods
+            # Here self.mouth_pos is likely in frame pixels. 
+            # We need to scale it.
+            
+            # Note: stored self.mouth_pos is raw frame pixels (640x480)
+            screen_x = cam_x + int(self.mouth_pos[0] * scale)
+            screen_y = cam_y + int(self.mouth_pos[1] * scale)
             self.fire_particles.set_position(screen_x, screen_y)
             self.fire_particles.wind_x = -self.head_yaw * 200
         self.fire_particles.update(dt)
@@ -2950,10 +3282,11 @@ class JutsuAcademy:
             frame = (frame.astype(np.float32) * 0.4).astype(np.uint8)
             
         cam_surface = self.cv2_to_pygame(frame)
+        cam_surface = pygame.transform.smoothscale(cam_surface, (new_w, new_h))
         
         # UI Frame for camera feed
-        pygame.draw.rect(self.screen, (30, 30, 40), (cam_x - 6, cam_y - 6, 652, 492), border_radius=14)
-        pygame.draw.rect(self.screen, COLORS["border"], (cam_x - 6, cam_y - 6, 652, 492), 2, border_radius=14)
+        pygame.draw.rect(self.screen, (30, 30, 40), (cam_x - 6, cam_y - 6, new_w + 12, new_h + 12), border_radius=14)
+        pygame.draw.rect(self.screen, COLORS["border"], (cam_x - 6, cam_y - 6, new_w + 12, new_h + 12), 2, border_radius=14)
         
         self.screen.blit(cam_surface, (cam_x, cam_y))
         
@@ -2961,9 +3294,10 @@ class JutsuAcademy:
              jutsu_name = self.jutsu_names[self.current_jutsu_idx]
              if self.jutsu_list[jutsu_name].get("effect") == "lightning":
                   # Create a lightning-blue transparent overlay
-                  blue_overlay = pygame.Surface((640, 480), pygame.SRCALPHA)
+                  blue_overlay = pygame.Surface((new_w, new_h), pygame.SRCALPHA)
                   blue_overlay.fill((0, 80, 150, 40)) # Light blue tint
                   self.screen.blit(blue_overlay, (cam_x, cam_y))
+
         
         # Fire particles
         self.fire_particles.render(self.screen)
@@ -3049,25 +3383,86 @@ class JutsuAcademy:
                 # Video ended, loop it
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
+        # Progression HUD (NEW)
+        # Draw Rank and XP Level Bar in top margin
+        p_x, p_y = cam_x, cam_y - 85
+        rank_txt = f"{self.progression.rank}  •  Lv.{self.progression.level}"
+        rank_surf = self.fonts["body_sm"].render(rank_txt, True, (255, 215, 0)) # Gold
+        # Glow for rank text
+        rank_glow = self.fonts["body_sm"].render(rank_txt, True, (218, 165, 32))
+        self.screen.blit(rank_glow, (p_x + 1, p_y + 1))
+        self.screen.blit(rank_surf, (p_x, p_y))
+        
+        # XP Bar
+        bar_w, bar_h = 240, 10
+        bar_y = cam_y - 62
+        pygame.draw.rect(self.screen, (30, 30, 40), (p_x, bar_y, bar_w, bar_h), border_radius=5)
+        pygame.draw.rect(self.screen, (50, 50, 70), (p_x, bar_y, bar_w, bar_h), 1, border_radius=5)
+        
+        prev_lv_xp = self.progression.get_xp_for_level(self.progression.level)
+        next_lv_xp = self.progression.get_xp_for_level(self.progression.level + 1)
+        progress = (self.progression.xp - prev_lv_xp) / max(1, (next_lv_xp - prev_lv_xp))
+        progress = max(0, min(1, progress))
+        
+        if progress > 0:
+            pygame.draw.rect(self.screen, COLORS["accent"], (p_x + 2, bar_y + 2, (bar_w - 4) * progress, bar_h - 4), border_radius=3)
+            # Shine effect on XP bar
+            shine_rect = pygame.Rect(p_x + 2, bar_y + 2, (bar_w - 4) * progress, (bar_h - 4) // 2)
+            pygame.draw.rect(self.screen, (255, 255, 255, 40), shine_rect, border_radius=3)
+            
+        # Draw XP text
+        xp_txt = f"{self.progression.xp} / {next_lv_xp} XP"
+        xp_surf = self.fonts["tiny"].render(xp_txt, True, COLORS["text_dim"])
+        self.screen.blit(xp_surf, (p_x + bar_w + 10, bar_y - 3))
+
+        # XP Popups
+        for popup in self.xp_popups[:]:
+            popup["timer"] -= dt
+            if popup["timer"] <= 0:
+                self.xp_popups.remove(popup)
+                continue
+            
+            # Float up
+            popup["y"] -= 40 * dt
+            # Fade out
+            alpha = int(min(255, popup["timer"] * 255))
+            
+            p_surf = self.fonts["title_sm"].render(popup["text"], True, popup["color"])
+            p_surf.set_alpha(alpha)
+            self.screen.blit(p_surf, p_surf.get_rect(center=(popup["x"], popup["y"])))
+
         # Icon bar
-        self._render_icon_bar(cam_x, cam_y + 490)
+        # If locked, don't show sequence icons but a lock message
+        if is_locked:
+            lock_msg = self.fonts["body"].render(f"REQUIRED RANK: LV.{min_lv}", True, COLORS["error"])
+            self.screen.blit(lock_msg, lock_msg.get_rect(center=(cam_x + 320, cam_y + 510)))
+        else:
+            self._render_icon_bar(cam_x, cam_y + 490)
         
         # Move Title (Styled Capsule)
-        jutsu_name = self.jutsu_names[self.current_jutsu_idx].upper()
-        name_surf = self.fonts["title_sm"].render(jutsu_name, True, (255, 255, 255))
+        display_name = current_jutsu_name.upper() if not is_locked else "??????"
+        text_color = (255, 255, 255) if not is_locked else (100, 100, 100)
+        
+        name_surf = self.fonts["title_sm"].render(display_name, True, text_color)
         tw, th = name_surf.get_size()
         
         padding_x, padding_y = 35, 10
         title_rect = pygame.Rect(cam_x + (640 - tw - padding_x*2)//2, cam_y - 48, tw + padding_x*2, th + padding_y*2)
         
-        # Subtle Glow
-        glow_rect = title_rect.inflate(6, 6)
-        glow_surf = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
-        pygame.draw.rect(glow_surf, (249, 115, 22, 30), (0, 0, glow_rect.width, glow_rect.height), border_radius=20)
-        self.screen.blit(glow_surf, glow_rect)
-        
-        pygame.draw.rect(self.screen, (20, 20, 25), title_rect, border_radius=18)
-        pygame.draw.rect(self.screen, COLORS["accent"], title_rect, 2, border_radius=18)
+        if not is_locked:
+            # Subtle Glow
+            glow_rect = title_rect.inflate(6, 6)
+            glow_surf = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(glow_surf, (249, 115, 22, 30), (0, 0, glow_rect.width, glow_rect.height), border_radius=20)
+            self.screen.blit(glow_surf, glow_rect)
+            
+            pygame.draw.rect(self.screen, (20, 20, 25), title_rect, border_radius=18)
+            pygame.draw.rect(self.screen, COLORS["accent"], title_rect, 2, border_radius=18)
+        else:
+            # Grayed out for locked
+            pygame.draw.rect(self.screen, (25, 25, 30), title_rect, border_radius=18)
+            pygame.draw.rect(self.screen, (60, 60, 70), title_rect, 2, border_radius=18)
+
         self.screen.blit(name_surf, (title_rect.centerx - tw//2, title_rect.centery - th//2))
         
         # FPS Counter (Styled)
@@ -3090,9 +3485,17 @@ class JutsuAcademy:
             mouse_pos = pygame.mouse.get_pos()
             arrow_y = cam_y + 200
             
-            # Precise Hitboxes (Width/Height based on font/icon size)
-            self.left_arrow_rect = pygame.Rect(cam_x - 70, arrow_y, 60, 60)
-            self.right_arrow_rect = pygame.Rect(cam_x + 650, arrow_y, 60, 60)
+            # Symmetrical Positioning Math:
+            # We want a 15px visual gap from the feed to the icon edge.
+            # Icon is 50px wide. Hitbox is 20px wide.
+            # Left: Icon starts at cam_x - 15 - 50 = cam_x - 65.
+            # Right: Icon starts at cam_x + 640 + 15 = cam_x + 655.
+            
+            # Hitbox centered on icon: Icon center +/- 10.
+            # Left Icon Center: (cam_x - 65) + 25 = cam_x - 40. -> Rect: [cam_x-50, 20]
+            # Right Icon Center: (cam_x + 655) + 25 = cam_x + 680. -> Rect: [cam_x+670, 20]
+            self.left_arrow_rect = pygame.Rect(cam_x - 50, arrow_y, 20, 60)
+            self.right_arrow_rect = pygame.Rect(cam_x + 670, arrow_y, 20, 60)
             
             # Left Arrow Render
             l_hover = self.left_arrow_rect.collidepoint(mouse_pos)
@@ -3100,11 +3503,10 @@ class JutsuAcademy:
             if l_hover: pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
             
             if self.arrow_icons["left"]:
-                # If icon exists, we could tint it, but let's stick to the color logic for consistency
-                self.screen.blit(self.arrow_icons["left"], self.left_arrow_rect)
+                # Blit icon centered on the hitbox Y, with symmetrical X offset
+                self.screen.blit(self.arrow_icons["left"], (cam_x - 65, arrow_y + 5))
             else:
                 left_surf = self.fonts["title_lg"].render("◀", True, l_color)
-                # Center within hit zone
                 self.screen.blit(left_surf, (self.left_arrow_rect.centerx - left_surf.get_width()//2, self.left_arrow_rect.centery - left_surf.get_height()//2))
 
             # Right Arrow Render
@@ -3113,10 +3515,12 @@ class JutsuAcademy:
             if r_hover: pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
                 
             if self.arrow_icons["right"]:
-                self.screen.blit(self.arrow_icons["right"], self.right_arrow_rect)
+                self.screen.blit(self.arrow_icons["right"], (cam_x + 655, arrow_y + 5))
             else:
                 right_surf = self.fonts["title_lg"].render("▶", True, r_color)
                 self.screen.blit(right_surf, (self.right_arrow_rect.centerx - right_surf.get_width()//2, self.right_arrow_rect.centery - right_surf.get_height()//2))
+            
+
         else:
             if hasattr(self, "left_arrow_rect"): del self.left_arrow_rect
             if hasattr(self, "right_arrow_rect"): del self.right_arrow_rect
@@ -3323,6 +3727,12 @@ class JutsuAcademy:
                         self.state = GameState.PRACTICE_SELECT
                         self.pending_action = None
                         
+        elif self.state == GameState.ERROR_MODAL:
+            if mouse_click:
+                 if hasattr(self, 'error_ok_rect') and self.error_ok_rect.collidepoint(mouse_pos):
+                     self.play_sound("click")
+                     self.state = GameState.MENU
+            
         elif self.state == GameState.CONNECTION_LOST:
             if mouse_click:
                 if hasattr(self, 'conn_lost_exit_rect') and self.conn_lost_exit_rect.collidepoint(mouse_pos):

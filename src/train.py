@@ -181,6 +181,21 @@ def main():
         action="store_true",
         help="Skip dataset validation check"
     )
+
+    # Augmentation Arguments
+    parser.add_argument("--hsv-h", type=float, default=0.015, help="HSV-Hue augmentation (fraction)")
+    parser.add_argument("--hsv-s", type=float, default=0.7, help="HSV-Saturation augmentation (fraction)")
+    parser.add_argument("--hsv-v", type=float, default=0.4, help="HSV-Value augmentation (fraction)")
+    parser.add_argument("--degrees", type=float, default=15.0, help="Image rotation (+/- deg)")
+    parser.add_argument("--translate", type=float, default=0.1, help="Image translation (+/- fraction)")
+    parser.add_argument("--scale", type=float, default=0.5, help="Image scale gain (+/- gain)")
+    parser.add_argument("--shear", type=float, default=0.0, help="Image shear (+/- deg)")
+    parser.add_argument("--perspective", type=float, default=0.0005, help="Image perspective (+/- fraction), range 0-0.001")
+    parser.add_argument("--fliplr", type=float, default=0.5, help="Image flip left-right (probability)")
+    parser.add_argument("--mosaic", type=float, default=1.0, help="Image mosaic (probability)")
+    parser.add_argument("--mixup", type=float, default=0.1, help="Image mixup (probability)")
+    parser.add_argument("--copy-paste", type=float, default=0.1, help="Segment copy-paste (probability)")
+    
     args = parser.parse_args()
     
     # =========================================================================
@@ -262,15 +277,19 @@ def main():
             pretrained=True,
             verbose=True,
             resume=args.resume,
-            # Augmentation settings (reasonable defaults)
-            hsv_h=0.015,
-            hsv_s=0.7,
-            hsv_v=0.4,
-            degrees=10.0,
-            translate=0.1,
-            scale=0.5,
-            fliplr=0.5,
-            mosaic=1.0,
+            # Augmentation settings (from CLI args)
+            hsv_h=args.hsv_h,
+            hsv_s=args.hsv_s,
+            hsv_v=args.hsv_v,
+            degrees=args.degrees,
+            translate=args.translate,
+            scale=args.scale,
+            shear=args.shear,
+            perspective=args.perspective,
+            fliplr=args.fliplr,
+            mosaic=args.mosaic,
+            mixup=args.mixup,
+            copy_paste=args.copy_paste,
         )
         
     except KeyboardInterrupt:
