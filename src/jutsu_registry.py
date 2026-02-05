@@ -49,7 +49,7 @@ OFFICIAL_JUTSUS = {
     "Rasengan": {
         "sequence": ["ram"],
         "display_text": "RASENGAN!",
-        "sound_path": None,
+        "sound_path": "src/sounds/rasengan.mp3",
         "video_path": "src/RasenShuriken/RasenShuriken.mp4",
         "effect": "rasengan"
     }

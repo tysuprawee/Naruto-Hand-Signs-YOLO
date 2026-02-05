@@ -28,6 +28,7 @@ import webbrowser
 import threading
 import os
 import requests
+import ast
 from io import BytesIO
 
 # Add parent path to import utils
@@ -59,6 +60,12 @@ except ImportError:
 # Discord credentials from env
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
+
+# Advanced Camera Discovery
+try:
+    from pygrabber.dshow_graph import FilterGraph
+except ImportError:
+    FilterGraph = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -404,7 +411,39 @@ class Dropdown:
                 
                 text = self.font.render(opt, True, COLORS["text"])
                 surface.blit(text, (self.x + 15, opt_rect.y + 10))
+
+class Checkbox:
+    def __init__(self, x, y, size, label, initial=False):
+        self.rect = pygame.Rect(x, y, size, size)
+        self.size = size
+        self.label = label
+        self.checked = initial
+        self.font = None
     
+    def update(self, mouse_pos, mouse_click, play_sound=None):
+        if mouse_click and self.rect.collidepoint(mouse_pos):
+            self.checked = not self.checked
+            if play_sound: play_sound("click")
+            return True
+        return False
+    
+    def render(self, surface):
+        if self.font is None:
+            self.font = pygame.font.Font(None, 24)
+            
+        # Box
+        pygame.draw.rect(surface, COLORS["bg_card"], self.rect, border_radius=4)
+        pygame.draw.rect(surface, COLORS["border"], self.rect, 2, border_radius=4)
+        
+        # Check
+        if self.checked:
+            inner = self.rect.inflate(-8, -8)
+            pygame.draw.rect(surface, COLORS["accent"], inner, border_radius=2)
+            
+        # Label
+        label_surf = self.font.render(self.label, True, COLORS["text"])
+        surface.blit(label_surf, (self.rect.right + 10, self.rect.y + (self.size - 24)//2 + 4))
+
     def get_selected(self):
         if self.options and 0 <= self.selected_idx < len(self.options):
             return self.options[self.selected_idx]
@@ -467,7 +506,8 @@ class JutsuAcademy:
         self.settings = {
             "music_vol": 0.5,
             "sfx_vol": 0.7,
-            "camera_idx": 0
+            "camera_idx": 0,
+            "debug_hands": False
         }
         self.load_settings()
         
@@ -511,6 +551,21 @@ class JutsuAcademy:
         self.network_manager = NetworkManager()
         self.leaderboard_data = []
         self.leaderboard_loading = False
+        self.leaderboard_avatars = {} # Cache for rounded surfaces
+        
+        # Announcements
+        self.announcements = []
+        self.announcements_loading = False
+        self.show_announcements = False
+        self.current_announcement_idx = 0
+        self.announcements_fetched = False
+        self.announcement_timer_start = time.time()
+        self.announcement_auto_show_delay = 1.5
+        
+        # Trigger background fetch if online
+        if self.network_manager.client:
+             threading.Thread(target=self._fetch_announcements, daemon=True).start()
+
         self.class_names = None
         self.face_landmarker = None
         self.hand_landmarker = None
@@ -529,9 +584,12 @@ class JutsuAcademy:
         self.jutsu_start_time = 0
         self.jutsu_duration = 5.0
         
-        # Tracking
+        # Tracking & Smoothing
         self.mouth_pos = None
         self.hand_pos = None
+        self.smooth_hand_pos = None
+        self.hand_lost_frames = 0
+        self.max_hold_frames = 15 # frames to keep the effect where it was
         self.head_yaw = 0
         
         # Effects
@@ -542,7 +600,7 @@ class JutsuAcademy:
         self.video_cap = None
         self.jutsu_videos = {}
         self._load_jutsu_videos()
-        
+
         # Icons
         self.icons = {}
         self._load_icons()
@@ -583,8 +641,20 @@ class JutsuAcademy:
         print("[+] Jutsu Academy initialized!")
     
     def _scan_cameras(self):
-        """Scan for available cameras."""
+        """Scan for available cameras with advanced names if possible."""
         cameras = []
+        
+        # 1. Try PyGrabber (Best for Windows Names)
+        if FilterGraph:
+            try:
+                graph = FilterGraph()
+                devices = graph.get_input_devices()
+                if devices:
+                    return devices
+            except:
+                pass
+        
+        # 2. Fallback to OpenCV
         for i in range(5):
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
@@ -803,7 +873,7 @@ class JutsuAcademy:
     
     # ─── USER SESSION MANAGEMENT ───
     def _load_user_session(self):
-        """Load saved user session."""
+        """Load saved user session and refresh profile."""
         try:
             session_path = Path("user_session.json")
             if session_path.exists():
@@ -811,12 +881,31 @@ class JutsuAcademy:
                     data = json.load(f)
                     self.username = data.get("username", "Guest")
                     self.discord_user = data.get("discord_user")
+                    
                     if self.discord_user:
                         print(f"[+] Loaded session: {self.username}")
-                        # Load avatar in background
+                        # Load avatar and refresh token in background
                         threading.Thread(target=self._load_discord_avatar, daemon=True).start()
+                        threading.Thread(target=self._refresh_discord_token, daemon=True).start()
         except Exception as e:
             print(f"[!] Session load error: {e}")
+
+    def _refresh_discord_token(self):
+        """Validate current session token with Discord."""
+        if not self.discord_user or "access_token" not in self.discord_user:
+            return
+            
+        try:
+            token = self.discord_user["access_token"]
+            r = requests.get("https://discord.com/api/users/@me", 
+                             headers={"Authorization": f"Bearer {token}"}, timeout=5)
+            if r.status_code == 200:
+                print("[+] Discord session validated")
+            else:
+                print("[-] Discord session expired or invalid")
+                # We don't force logout yet, but could if needed
+        except Exception as e:
+            print(f"[!] Token refresh error: {e}")
     
     def _save_user_session(self):
         """Save user session to file."""
@@ -850,10 +939,50 @@ class JutsuAcademy:
             
             time.sleep(10) # Check every 10 seconds
     
+    def _create_rounded_avatar(self, img_data, size=(40, 40)):
+        """Convert raw image data to a rounded pygame surface using PIL for smooth masking."""
+        try:
+            from PIL import Image, ImageDraw
+            if isinstance(img_data, bytes):
+                pil_img = Image.open(BytesIO(img_data))
+            else:
+                pil_img = Image.open(img_data) # Path
+                
+            pil_img = pil_img.convert("RGBA").resize(size, Image.Resampling.LANCZOS)
+            
+            # Create smooth rounded rectangle mask
+            mask = Image.new('L', size, 0)
+            draw = ImageDraw.Draw(mask)
+            # Use radius ~20% of size for a modern "squircle" look
+            radius = size[0] // 5
+            draw.rounded_rectangle((0, 0, size[0], size[1]), radius=radius, fill=255)
+            
+            # Apply mask to alpha channel
+            pil_img.putalpha(mask)
+            
+            # Convert back to pygame surface
+            data = pil_img.tobytes()
+            return pygame.image.fromstring(data, size, "RGBA")
+        except Exception as e:
+            print(f"[!] Avatar rounding error: {e}")
+            return self._get_fallback_avatar(size)
+
+    def _get_fallback_avatar(self, size=(40, 40)):
+        """Load the shadow fallback and round it."""
+        path = "src/pics/shadow.jpg"
+        if not os.path.exists(path):
+            # Procedural fallback if file missing
+            surf = pygame.Surface(size, pygame.SRCALPHA)
+            pygame.draw.circle(surf, (60, 60, 70), (size[0]//2, size[1]//2), size[0]//2)
+            return surf
+        return self._create_rounded_avatar(path, size)
+
     def _load_discord_avatar(self):
-        """Load Discord avatar from URL."""
+        """Load Discord avatar from URL and round it."""
         if not self.discord_user:
+            self.user_avatar = self._get_fallback_avatar()
             return
+            
         try:
             user_id = self.discord_user.get("id")
             avatar_hash = self.discord_user.get("avatar")
@@ -861,20 +990,14 @@ class JutsuAcademy:
                 avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=64"
                 response = requests.get(avatar_url, timeout=5)
                 if response.status_code == 200:
-                    img_data = BytesIO(response.content)
-                    # Convert to pygame surface
-                    from PIL import Image
-                    pil_img = Image.open(img_data)
-                    pil_img = pil_img.convert("RGBA")
-                    pil_img = pil_img.resize((40, 40))
-                    # Convert PIL to pygame
-                    mode = pil_img.mode
-                    size = pil_img.size
-                    data = pil_img.tobytes()
-                    self.user_avatar = pygame.image.fromstring(data, size, mode)
-                    print("[+] Avatar loaded")
+                    self.user_avatar = self._create_rounded_avatar(response.content)
+                    print("[+] Avatar loaded and rounded")
+                    return
         except Exception as e:
-            print(f"[!] Avatar load error: {e}")
+            print(f"[!] Avatar fetch error: {e}")
+            
+        # Fallback
+        self.user_avatar = self._get_fallback_avatar()
     
     def start_discord_login(self):
         """Start Discord login in background thread."""
@@ -1029,6 +1152,10 @@ class JutsuAcademy:
         
         self.camera_dropdown = Dropdown(cx - 150, 420, 300, self.cameras, self.settings["camera_idx"])
         
+        self.settings_checkboxes = {
+            "debug_hands": Checkbox(cx - 150, 480, 24, "Show Hand Skeleton (MediaPipe)", self.settings.get("debug_hands", False))
+        }
+        
         self.settings_buttons = {
             "back": Button(cx - 100, 550, 200, 50, "SAVE & BACK"),
         }
@@ -1038,10 +1165,11 @@ class JutsuAcademy:
         cx = SCREEN_WIDTH // 2
         
         self.practice_buttons = {
-            "freeplay": Button(cx - 150, 250, 300, 70, "FREE PLAY"),
-            "challenge": Button(cx - 150, 350, 300, 70, "CHALLENGE"),
-            "leaderboard": Button(cx - 150, 450, 300, 60, "LEADERBOARD", color=(218, 165, 32)), # Gold
-            "back": Button(cx - 100, 600, 200, 50, "BACK"),
+            "freeplay": Button(cx - 150, 250, 300, 60, "FREE PLAY"),
+            "challenge": Button(cx - 150, 330, 300, 60, "CHALLENGE"),
+            "multiplayer": Button(cx - 150, 410, 300, 60, "MULTIPLAYER (LOCKED)", color=(40, 40, 40)),
+            "leaderboard": Button(cx - 150, 490, 300, 50, "LEADERBOARD", color=(218, 165, 32)), # Gold
+            "back": Button(cx - 100, 620, 200, 50, "BACK"),
         }
     
     def _create_about_ui(self):
@@ -1246,6 +1374,106 @@ class JutsuAcademy:
         
         return frame, detected_class
     
+    def detect_hands(self, frame):
+        """Detect hand landmarks for skeleton visualization and tracking."""
+        if not self.hand_landmarker:
+            return
+            
+        try:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            
+            # Using current clock time for timestamp (MS)
+            timestamp = int(time.time() * 1000)
+            result = self.hand_landmarker.detect_for_video(mp_image, timestamp)
+            
+            if result.hand_landmarks:
+                self.hand_lost_frames = 0
+                h, w = frame.shape[:2]
+                landmarks = result.hand_landmarks[0] # Take first hand
+                
+                # 1. Base Position (Centroid of Wrist + All Knuckles)
+                indices = [0, 5, 9, 13, 17]
+                base_x = sum(landmarks[i].x for i in indices) / len(indices)
+                base_y = sum(landmarks[i].y for i in indices) / len(indices)
+
+                # 2. Compute Palm Normal (Wrist -> Index, Wrist -> Pinky) using vector math
+                def to_vec(idx):
+                    lm = landmarks[idx]
+                    return np.array([lm.x, lm.y, lm.z])
+                
+                v1 = to_vec(5) - to_vec(0)  # Wrist to Index
+                v2 = to_vec(17) - to_vec(0) # Wrist to Pinky
+                normal = np.cross(v1, v2)
+                mag = np.linalg.norm(normal)
+                if mag > 1e-6: normal /= mag # Normalize
+                
+                # 3. Apply Dynamic Offset based on Orientation & Handedness
+                # The normal points "out" of the palm. Overwriting user mirror flip.
+                offset_strength = 0.25 # Strong push to the forehand
+                
+                # Check Handedness from result
+                if result.handedness:
+                    label = result.handedness[0][0].category_name
+                    # If label is "Left" (Physical Right in mirror), use negative offset
+                    if label == "Left":
+                        offset_strength = -0.25
+
+                target_offset_x = normal[0] * offset_strength
+                target_offset_y = normal[1] * offset_strength
+                
+                target_x = (base_x + target_offset_x) * w
+                target_y = (base_y + target_offset_y) * h
+                
+                # 4. Temporal Smoothing (Stronger smoothing for "glue" effect)
+                if self.smooth_hand_pos is None:
+                    self.smooth_hand_pos = (target_x, target_y)
+                else:
+                    # 0.08 is very smooth but keeps it attached
+                    alpha = 0.08 
+                    curr_x, curr_y = self.smooth_hand_pos
+                    new_x = curr_x + (target_x - curr_x) * alpha
+                    new_y = curr_y + (target_y - curr_y) * alpha
+                    self.smooth_hand_pos = (new_x, new_y)
+                
+                self.hand_pos = self.smooth_hand_pos
+                
+                # Draw Skeleton if enabled
+                if self.settings.get("debug_hands", False):
+                    # Define hand connections manually 
+                    CONNECTIONS = [
+                        (0,1), (1,2), (2,3), (3,4), # Thumb
+                        (0,5), (5,6), (6,7), (7,8), # Index
+                        (5,9), (9,10), (10,11), (11,12), # Middle
+                        (9,13), (13,14), (14,15), (15,16), # Ring
+                        (13,17), (17,18), (18,19), (19,20), (0,17) # Pinky + Palm
+                    ]
+                    # Draw points
+                    for lm in landmarks:
+                        cx, cy = int(lm.x * w), int(lm.y * h)
+                        cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+                        cv2.circle(frame, (cx, cy), 1, (255, 255, 255), -1)
+                    
+                    # Draw lines
+                    for conn in CONNECTIONS:
+                        p1 = landmarks[conn[0]]
+                        p2 = landmarks[conn[1]]
+                        x1, y1 = int(p1.x * w), int(p1.y * h)
+                        x2, y2 = int(p2.x * w), int(p2.y * h)
+                        cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            else:
+                self.hand_lost_frames += 1
+                # Increase hold time to 30 frames (~1 sec at 30fps)
+                if self.hand_lost_frames < 30:
+                    # Keep previous smooth position as current output
+                    self.hand_pos = self.smooth_hand_pos
+                else:
+                    # Truly lost, allow fallback to center
+                    self.hand_pos = None
+                    self.smooth_hand_pos = None
+        except Exception as e:
+            print(f"[!] detect_hands error: {e}")
+
     def detect_face(self, frame):
         """Detect face landmarks for fire positioning."""
         if not self.face_landmarker:
@@ -1418,7 +1646,8 @@ class JutsuAcademy:
             self.screen.blit(self.user_avatar, (self.profile_rect.x + 15, self.profile_rect.y + 10))
         else:
             # Guest Icon
-            pygame.draw.circle(self.screen, (60, 60, 70), (self.profile_rect.x + 35, self.profile_rect.y + 30), 20)
+            guest_rect = pygame.Rect(self.profile_rect.x + 15, self.profile_rect.y + 10, 40, 40)
+            pygame.draw.rect(self.screen, (60, 60, 70), guest_rect, border_radius=8)
             icon = self.fonts["body_sm"].render("?", True, COLORS["text_dim"])
             self.screen.blit(icon, icon.get_rect(center=(self.profile_rect.x + 35, self.profile_rect.y + 30)))
 
@@ -1436,8 +1665,19 @@ class JutsuAcademy:
             status_text = "Guest Mode"
             status_color = COLORS["text_dim"]
             
-        status_render = self.fonts["small"].render(status_text, True, status_color)
-        self.screen.blit(status_render, (self.profile_rect.x + 70, self.profile_rect.y + 35))
+        status_render = self.fonts["tiny"].render(status_text, True, status_color)
+        self.screen.blit(status_render, (self.profile_rect.x + 70, self.profile_rect.y + 34))
+
+        # ─── New: Announcement Overlay Logic ───
+        # Auto-show logic
+        if not self.show_announcements and self.announcements_fetched and not hasattr(self, "_ann_shown_once"):
+            if time.time() - self.announcement_timer_start > self.announcement_auto_show_delay:
+                 self.show_announcements = True
+                 self._ann_shown_once = True
+                 
+        if self.show_announcements:
+            self.render_announcement_popup()
+            status_color = COLORS["text_dim"]
         
         if profile_hovered:
             any_hovered = True
@@ -1848,6 +2088,10 @@ class JutsuAcademy:
         self.screen.blit(cam_label, (SCREEN_WIDTH // 2 - 150, 395))
         self.camera_dropdown.render(self.screen)
         
+        # Checkboxes
+        for cb in self.settings_checkboxes.values():
+            cb.render(self.screen)
+            
         # Buttons
         for btn in self.settings_buttons.values():
             btn.render(self.screen)
@@ -1883,6 +2127,7 @@ class JutsuAcademy:
         descriptions = {
             "freeplay": "Practice any jutsu at your own pace",
             "challenge": "Complete jutsus as fast as possible",
+            "multiplayer": "PvP Battles (Coming Soon)",
             "leaderboard": "View the rankings of the greatest Shinobi"
         }
         
@@ -2073,9 +2318,165 @@ class JutsuAcademy:
             
             data = self.network_manager.get_leaderboard(limit=self.leaderboard_limit, offset=offset, mode=mode)
             self.leaderboard_data = data if data else []
+            
+            # Start background avatar fetch
+            if self.leaderboard_data:
+                 threading.Thread(target=self._load_leaderboard_avatars, args=(self.leaderboard_data,), daemon=True).start()
         except:
             self.leaderboard_data = []
         self.leaderboard_loading = False
+
+    def _load_leaderboard_avatars(self, data):
+        """Pre-fetch and round surfaces for leaderboard in background."""
+        for entry in data:
+            url = entry.get("avatar_url")
+            username = entry.get("username", "Guest")
+            
+            # Key by URL if exists, else by username (since Guest might not have URL)
+            cache_key = url if url else f"user_{username}"
+            
+            if cache_key in self.leaderboard_avatars:
+                continue
+                
+            if url:
+                try:
+                    r = requests.get(url, timeout=3)
+                    if r.status_code == 200:
+                         self.leaderboard_avatars[cache_key] = self._create_rounded_avatar(r.content, size=(32, 32))
+                         continue
+                except:
+                    pass
+            
+            # If fetch failed or no URL, use shadow fallback
+            self.leaderboard_avatars[cache_key] = self._get_fallback_avatar(size=(32, 32))
+
+    def _fetch_announcements(self):
+        """Fetch announcements in background."""
+        self.announcements_loading = True
+        try:
+            data = self.network_manager.get_announcements(limit=5)
+            # Flatten if message is a list to allow multi-page paging
+            flat_ann = []
+            if data:
+                for entry in data:
+                    msg = entry.get("message", "")
+                    # handle stringified lists or actual lists
+                    if isinstance(msg, str) and msg.startswith("[") and msg.endswith("]"):
+                        try:
+                             msg = ast.literal_eval(msg)
+                        except: pass
+                        
+                    if isinstance(msg, list):
+                        for m in msg:
+                            new_entry = entry.copy()
+                            new_entry["message"] = str(m)
+                            flat_ann.append(new_entry)
+                    else:
+                        flat_ann.append(entry)
+                        
+            self.announcements = flat_ann
+            if self.announcements:
+                 self.announcements_fetched = True
+                 print(f"[+] Loaded {len(self.announcements)} announcement(s)")
+        except:
+            self.announcements = []
+        self.announcements_loading = False
+
+    def render_announcement_popup(self):
+        """Render paginated announcement overlay."""
+        if not self.show_announcements or not self.announcements:
+            return
+            
+        # 1. Dim Backdrop
+        backdrop = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        backdrop.fill((0, 0, 0, 180))
+        self.screen.blit(backdrop, (0, 0))
+        
+        # 2. Main Card
+        card_w, card_h = 500, 350
+        card_x = (SCREEN_WIDTH - card_w) // 2
+        card_y = (SCREEN_HEIGHT - card_h) // 2
+        
+        card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+        # Outer Border
+        pygame.draw.rect(self.screen, (40, 40, 50), card_rect, border_radius=22)
+        # Inner Fill
+        inner_rect = card_rect.inflate(-4, -4)
+        pygame.draw.rect(self.screen, (20, 20, 25), inner_rect, border_radius=20)
+        
+        # 3. Content
+        padding = 30
+        title_y = card_y + padding
+        
+        # Title
+        title_txt = self.fonts["title_sm"].render("ANNOUNCEMENTS", True, (245, 158, 11))
+        self.screen.blit(title_txt, title_txt.get_rect(center=(SCREEN_WIDTH // 2, title_y + 15)))
+        
+        # Page Indicator
+        total = len(self.announcements)
+        idx = self.current_announcement_idx
+        page_txt = self.fonts["tiny"].render(f"{idx + 1} / {total}", True, (100, 100, 110))
+        self.screen.blit(page_txt, page_txt.get_rect(center=(SCREEN_WIDTH // 2, title_y + 45)))
+        
+        # Message
+        msg_y = title_y + 70
+        curr = self.announcements[idx]
+        msg = curr.get("message", "No content")
+        if isinstance(msg, list): msg = msg[0] if msg else "No content"
+        
+        # Wrap Text (Simple wrap)
+        words = str(msg).split(' ')
+        lines = []
+        current_line = []
+        max_w = card_w - (padding * 2)
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            w, _ = self.fonts["body"].size(test_line)
+            if w < max_w:
+                current_line.append(word)
+            else:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+        lines.append(' '.join(current_line))
+        
+        for i, line in enumerate(lines[:6]): # Limit lines
+            line_surf = self.fonts["body"].render(line, True, (220, 220, 230))
+            self.screen.blit(line_surf, line_surf.get_rect(center=(SCREEN_WIDTH // 2, msg_y + i * 28)))
+            
+        # 4. Navigation Buttons
+        btn_y = card_y + card_h - 45
+        
+        # Prev
+        if idx > 0:
+            txt = self.fonts["body_sm"].render("< Prev", True, (200, 200, 210))
+            self.ann_prev_rect = txt.get_rect(center=(card_x + 80, btn_y))
+            if self.ann_prev_rect.collidepoint(pygame.mouse.get_pos()):
+                 txt = self.fonts["body_sm"].render("< Prev", True, COLORS["accent"])
+            self.screen.blit(txt, self.ann_prev_rect)
+        elif hasattr(self, 'ann_prev_rect'): del self.ann_prev_rect
+            
+        # Next
+        if idx < total - 1:
+            txt = self.fonts["body_sm"].render("Next >", True, (200, 200, 210))
+            self.ann_next_rect = txt.get_rect(center=(card_x + card_w - 80, btn_y))
+            if self.ann_next_rect.collidepoint(pygame.mouse.get_pos()):
+                 txt = self.fonts["body_sm"].render("Next >", True, COLORS["accent"])
+            self.screen.blit(txt, self.ann_next_rect)
+        elif hasattr(self, 'ann_next_rect'): del self.ann_next_rect
+            
+        # Close (Only on last page)
+        if idx == total - 1:
+            close_txt = self.fonts["body"].render("CLOSE", True, (20, 20, 20))
+            btn_w, btn_h = 100, 36
+            self.ann_close_rect = pygame.Rect(SCREEN_WIDTH // 2 - btn_w // 2, btn_y - btn_h // 2, btn_w, btn_h)
+            color = (245, 158, 11)
+            if self.ann_close_rect.collidepoint(pygame.mouse.get_pos()):
+                 color = (217, 119, 6)
+            pygame.draw.rect(self.screen, color, self.ann_close_rect, border_radius=8)
+            self.screen.blit(close_txt, close_txt.get_rect(center=self.ann_close_rect.center))
+        elif hasattr(self, 'ann_close_rect'): 
+            del self.ann_close_rect
 
     def render_leaderboard(self):
         """Render leaderboard screen."""
@@ -2141,10 +2542,12 @@ class JutsuAcademy:
         # Header
         h_y = 170
         headers = ["Rank", "Shinobi", "Score", "Title"] 
-        x_offs = [40, 180, 480, 680]
-        for h, x in zip(headers, x_offs):
+        x_offs = [40, 140, 480, 680] # Moved Shinobi slightly left to make room for avatar
+        for i, (h, x) in enumerate(zip(headers, x_offs)):
             txt = self.fonts["body"].render(h, True, COLORS["accent"])
-            self.screen.blit(txt, (panel_rect.x + x, h_y))
+            # Adjust title slightly to the right to clear avatars
+            draw_x = x if i != 1 else x + 40
+            self.screen.blit(txt, (panel_rect.x + draw_x, h_y))
             
         pygame.draw.line(self.screen, COLORS["border"], (panel_rect.x + 20, h_y + 30), (panel_rect.right - 20, h_y + 30))
         
@@ -2198,9 +2601,21 @@ class JutsuAcademy:
                  # Rank
                  self.screen.blit(self.fonts["body_sm"].render(f"#{rank_num}", True, color), (panel_rect.x + x_offs[0], row_y))
                  
+                 # Profile Picture (Avatar)
+                 url = entry.get("avatar_url")
+                 username = entry.get("username", "Guest")
+                 cache_key = url if url else f"user_{username}"
+                 avatar_surf = self.leaderboard_avatars.get(cache_key)
+                 
+                 if not avatar_surf:
+                      # One-time lazy load if thread hasn't finished
+                      fallback = self._get_fallback_avatar(size=(32, 32))
+                      self.screen.blit(fallback, (panel_rect.x + x_offs[1], row_y - 8))
+                 else:
+                      self.screen.blit(avatar_surf, (panel_rect.x + x_offs[1], row_y - 8))
+
                  # Name
-                 name = entry.get("username", "Unknown")
-                 self.screen.blit(self.fonts["body_sm"].render(name[:14], True, COLORS["text"]), (panel_rect.x + x_offs[1], row_y))
+                 self.screen.blit(self.fonts["body_sm"].render(username[:14], True, COLORS["text"]), (panel_rect.x + x_offs[1] + 40, row_y))
                  
                  # Score
                  score = f"{entry.get('score_time', 0):.2f}s"
@@ -2260,10 +2675,19 @@ class JutsuAcademy:
         # Flip for mirror
         frame = cv2.flip(frame, 1)
         
-        # Detection
+        # 1. Detection Flow
+        detected = None
         if not self.jutsu_active:
+            # Sequence Phase: Use YOLO for hand sign recognition (bounding boxes)
             frame, detected = self.detect_and_process(frame)
-            
+            # Keep MediaPipe idle or low-freq if not needed, but we often want it for smooth transition
+            # self.detect_hands(frame) 
+        else:
+            # Effect Phase: Disable YOLO/Bounding Boxes and switch to MediaPipe for precise tracking
+            self.detect_hands(frame)
+            self.detect_face(frame)
+        
+        if not self.jutsu_active:
             # Check sequence
             if self.current_step < len(self.sequence):
                 target = self.sequence[self.current_step]
@@ -2302,9 +2726,6 @@ class JutsuAcademy:
                                 self.current_video = jutsu_name
                                 print(f"[+] Playing video: {video_path}")
         
-        # Face detection for effects
-        self.detect_face(frame)
-        
         # Camera position on screen
         cam_x = (SCREEN_WIDTH - 640) // 2
         cam_y = 50
@@ -2334,6 +2755,15 @@ class JutsuAcademy:
         # Center camera (already calculated above)
         self.screen.blit(cam_surface, (cam_x, cam_y))
         
+        # Atmospheric blue tint during Chidori
+        if self.jutsu_active:
+             jutsu_name = self.jutsu_names[self.current_jutsu_idx]
+             if self.jutsu_list[jutsu_name].get("effect") == "lightning":
+                  # Create a lightning-blue transparent overlay
+                  blue_overlay = pygame.Surface((640, 480), pygame.SRCALPHA)
+                  blue_overlay.fill((0, 80, 150, 40)) # Light blue tint
+                  self.screen.blit(blue_overlay, (cam_x, cam_y))
+        
         # Fire particles
         self.fire_particles.render(self.screen)
         
@@ -2350,21 +2780,42 @@ class JutsuAcademy:
                 # Track Hand
                 if hasattr(self, 'hand_pos') and self.hand_pos:
                     hx, hy = self.hand_pos
-                    size = 250 # Smaller effect on hand
+                    size = 650 # Significantly bigger Chidori
                 else:
                     hx, hy = 320, 240
-                    size = 300 # Center if no hand
+                    size = 500 # Center if no hand
                 
-                # Resize video
-                vid_frame = cv2.resize(vid_frame, (size, size))
+                # Calculate aspect ratio to avoid stretching
+                v_h, v_w = vid_frame.shape[:2]
+                aspect = v_w / v_h
+                
+                if aspect > 1: # Landscape
+                    dw, dh = size, int(size / aspect)
+                else: # Portrait/Square
+                    dw, dh = int(size * aspect), size
+                
+                # Resize video (Maintaining aspect ratio)
+                vid_frame = cv2.resize(vid_frame, (dw, dh))
+                
+                # Apply Radial Feathering (Removes hard square edges from video frame)
+                # Create coordinate grids
+                Y, X = np.ogrid[:dh, :dw]
+                center_x, center_y = dw // 2, dh // 2
+                # Normalized elliptical distance (0.0 at center, 1.0 at edges)
+                dist = np.sqrt(((X - center_x) / (dw / 2))**2 + ((Y - center_y) / (dh / 2))**2)
+                # Soft fade starting at 65% of the radius
+                mask = np.clip(1.0 - (dist - 0.65) / 0.35, 0, 1)
+                mask = (mask ** 1.5).astype(np.float32) # Smooth falloff
+                # Apply mask to RGB values
+                vid_frame = (vid_frame.astype(np.float32) * mask[:, :, np.newaxis]).astype(np.uint8)
+                
                 vid_frame = cv2.cvtColor(vid_frame, cv2.COLOR_BGR2RGB)
                 vid_frame = np.rot90(vid_frame)
                 vid_frame = np.flipud(vid_frame)
                 vid_surface = pygame.surfarray.make_surface(vid_frame)
-                vid_surface.set_alpha(200)  # Semi-transparent overlay
                 
-                # Blit centered on hand
-                self.screen.blit(vid_surface, (cam_x + hx - size//2, cam_y + hy - size//2))
+                # Blit centered on hand with additive blending
+                self.screen.blit(vid_surface, (cam_x + hx - dw//2, cam_y + hy - dh//2), special_flags=pygame.BLEND_RGB_ADD)
             else:
                 # Video ended, loop it
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -2459,7 +2910,40 @@ class JutsuAcademy:
         """Handle pygame events."""
         mouse_click = False
         
-        for event in pygame.event.get():
+        # Capture events first
+        events = pygame.event.get()
+        
+        # IMPORTANT: Announcement Overlay Clicks
+        # If showing announcements, we intercept clicks and keys
+        if self.show_announcements:
+            mouse_pos = pygame.mouse.get_pos()
+            for event in events:
+                if event.type == pygame.QUIT:
+                    self.running = False
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    # Prev
+                    if hasattr(self, 'ann_prev_rect') and self.ann_prev_rect.collidepoint(mouse_pos):
+                         self.current_announcement_idx = max(0, self.current_announcement_idx - 1)
+                         self.play_sound("click")
+                    # Next
+                    elif hasattr(self, 'ann_next_rect') and self.ann_next_rect.collidepoint(mouse_pos):
+                         self.current_announcement_idx = min(len(self.announcements)-1, self.current_announcement_idx + 1)
+                         self.play_sound("click")
+                    # Close
+                    elif hasattr(self, 'ann_close_rect') and self.ann_close_rect.collidepoint(mouse_pos):
+                         self.show_announcements = False
+                         self.play_sound("click")
+                elif event.type == pygame.KEYDOWN:
+                    if event.key in [pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN]:
+                         self.show_announcements = False
+                         self.play_sound("click")
+                    elif event.key == pygame.K_LEFT:
+                         self.current_announcement_idx = max(0, self.current_announcement_idx - 1)
+                    elif event.key == pygame.K_RIGHT:
+                         self.current_announcement_idx = min(len(self.announcements)-1, self.current_announcement_idx + 1)
+            return # Block other menu interactions while announcements are up
+
+        for event in events:
             if event.type == pygame.QUIT:
                 # Intercept close button
                 self.prev_state = self.state
@@ -2636,6 +3120,9 @@ class JutsuAcademy:
             
             self.camera_dropdown.update(mouse_pos, mouse_click, self.play_sound)
             
+            for name, cb in self.settings_checkboxes.items():
+                 cb.update(mouse_pos, mouse_click, self.play_sound)
+            
             for name, btn in self.settings_buttons.items():
                 if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "back":
@@ -2643,6 +3130,7 @@ class JutsuAcademy:
                         self.settings["music_vol"] = self.settings_sliders["music"].value
                         self.settings["sfx_vol"] = self.settings_sliders["sfx"].value
                         self.settings["camera_idx"] = self.camera_dropdown.selected_idx
+                        self.settings["debug_hands"] = self.settings_checkboxes["debug_hands"].checked
                         
                         if not self.is_muted:
                             pygame.mixer.music.set_volume(self.settings["music_vol"])
@@ -2656,6 +3144,9 @@ class JutsuAcademy:
                         self.start_game("practice")
                     elif name == "challenge":
                         self.start_game("challenge")
+                    elif name == "multiplayer":
+                        self.play_sound("click")
+                        print("[*] Multiplayer is currently locked.")
                     elif name == "leaderboard":
                         self.state = GameState.LEADERBOARD
                         # Trigger fetch

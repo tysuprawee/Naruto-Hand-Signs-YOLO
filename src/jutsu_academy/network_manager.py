@@ -182,6 +182,23 @@ class NetworkManager:
             print(f"[!] Leaderboard fetch failed: {e}")
             return []
 
+    def get_announcements(self, limit=10):
+        """Fetch active announcements from app_config table"""
+        if not self.client: return []
+        try:
+            response = self.client.table('app_config')\
+                .select('*')\
+                .eq('type', 'announcement')\
+                .eq('is_active', True)\
+                .order('priority', desc=True)\
+                .order('created_at', desc=True)\
+                .limit(limit)\
+                .execute()
+            return response.data
+        except Exception as e:
+            print(f"[!] Announcements fetch failed: {e}")
+            return []
+
     def submit_score(self, username, score_time, mode="Fireball", discord_id=None, avatar_url=None):
         """Upload score to DB"""
         if not self.client: return
