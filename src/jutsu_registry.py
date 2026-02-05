@@ -39,6 +39,7 @@ OFFICIAL_JUTSUS = {
         "video_path": None,
         "effect": "fire"
     },
+    
     "Sharingan": {
         "sequence": ["snake", "ram", "monkey", "boar", "horse", "tiger"],
         "display_text": "SHARINGAN!",

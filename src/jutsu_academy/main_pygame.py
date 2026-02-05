@@ -584,6 +584,15 @@ class JutsuAcademy:
         self.jutsu_start_time = 0
         self.jutsu_duration = 5.0
         
+        # Challenge Mode State
+        self.challenge_state = "waiting" # waiting, countdown, active, results
+        self.challenge_start_time = 0
+        self.challenge_final_time = 0
+        self.challenge_countdown_start = 0
+        self.challenge_rank_info = ""
+        self.challenge_submitting = False
+        self.submission_complete = False
+        
         # Tracking & Smoothing
         self.mouth_pos = None
         self.hand_pos = None
@@ -1301,11 +1310,26 @@ class JutsuAcademy:
         self.jutsu_active = False
         self.fire_particles.emitting = False
         
+        # Challenge Mode Init
+        self.challenge_state = "waiting"
+        self.challenge_start_time = 0
+        self.challenge_final_time = 0
+        self.challenge_rank_info = ""
+        self.challenge_submitting = False
+        self.submission_complete = False
+        
         self.state = GameState.PLAYING
     
     def _render_loading(self):
         """Render loading screen."""
-        self.screen.fill(COLORS["bg_dark"])
+        if hasattr(self, 'bg_image') and self.bg_image:
+             self.screen.blit(self.bg_image, (0, 0))
+             # Very dark overlay for loading state
+             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+             overlay.fill((0, 0, 0, 220)) 
+             self.screen.blit(overlay, (0, 0))
+        else:
+             self.screen.fill(COLORS["bg_dark"])
         
         # Loading text
         title = self.fonts["title_md"].render("LOADING", True, COLORS["accent"])
@@ -2658,12 +2682,169 @@ class JutsuAcademy:
 
                  if rect.collidepoint(pygame.mouse.get_pos()):
                      txt = self.fonts["body_sm"].render("Next >", True, COLORS["accent_glow"])
+                     self.play_sound("click")
                      pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
                  self.screen.blit(txt, rect)
     
+    # ─── Challenge Mode Helpers ───
+    def _render_challenge_lobby(self, cam_x, cam_y):
+        """Draw dimmed lobby with 'Press SPACE to Start'."""
+        overlay = pygame.Surface((640, 480), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        self.screen.blit(overlay, (cam_x, cam_y))
+        
+        # Text
+        txt = self.fonts["title_md"].render("PRESS [SPACE] TO START", True, COLORS["accent_glow"])
+        rect = txt.get_rect(center=(cam_x + 320, cam_y + 200))
+        self.screen.blit(txt, rect)
+        
+        sub = self.fonts["body"].render("Perform the sequence as FAST as possible!", True, COLORS["text_dim"])
+        self.screen.blit(sub, sub.get_rect(center=(cam_x + 320, cam_y + 260)))
+        
+        rules = [
+            "1. Timer starts on 'GO!'",
+            "2. Detect all hand signs in order.",
+            "3. Timer stops on the final sign."
+        ]
+        for i, r in enumerate(rules):
+            rt = self.fonts["body_sm"].render(r, True, COLORS["text"])
+            self.screen.blit(rt, rt.get_rect(center=(cam_x + 320, cam_y + 320 + i*25)))
+
+    def _render_challenge_countdown(self, cam_x, cam_y):
+        """Draw big countdown in center."""
+        elapsed = time.time() - self.challenge_countdown_start
+        remaining = 3 - int(elapsed)
+        
+        if remaining > 0:
+            # Pulsing effect
+            # fractional part for scaling
+            # frac = 1.0 - (elapsed % 1.0) 
+            # size = int(120 + 80 * frac)
+            # font = pygame.font.Font(None, size)
+            
+            # Use default font with fixed larger size for countdown
+            frac = 1.0 - (elapsed % 1.0) 
+            size = int(120 * (1.0 + 0.5 * frac)) # Scale up from 120
+            font = pygame.font.Font(None, size) 
+            
+            txt = font.render(str(remaining), True, (255, 255, 0)) # Yellow
+            rect = txt.get_rect(center=(cam_x + 320, cam_y + 240))
+            self.screen.blit(txt, rect)
+        else:
+            # GO!
+            self.challenge_state = "active"
+            self.challenge_start_time = time.time()
+            self.last_sign_time = time.time() # Reset cooldown
+            self.play_sound("complete")
+
+    def _render_challenge_results(self, cam_x, cam_y):
+        """Draw results overlay with Rank and stats."""
+        overlay = pygame.Surface((640, 480), pygame.SRCALPHA)
+        overlay.fill((10, 10, 15, 200)) # Extra dark blue-ish
+        self.screen.blit(overlay, (cam_x, cam_y))
+        
+        # Card style
+        card = pygame.Rect(cam_x + 100, cam_y + 50, 440, 380)
+        pygame.draw.rect(self.screen, (25, 25, 30), card, border_radius=20)
+        pygame.draw.rect(self.screen, COLORS["accent"], card, 2, border_radius=20)
+        
+        # Title
+        t = self.fonts["title_md"].render("RESULTS", True, COLORS["accent"])
+        self.screen.blit(t, t.get_rect(center=(card.centerx, card.y + 50)))
+        
+        # Final Time
+        time_str = f"{self.challenge_final_time:.2f}s"
+        st = self.fonts["title_lg"].render(time_str, True, COLORS["success"])
+        self.screen.blit(st, st.get_rect(center=(card.centerx, card.y + 130)))
+        
+        # Rank Info
+        if self.challenge_submitting:
+            info = "Submitting score..."
+            color = COLORS["text_dim"]
+        elif self.challenge_rank_info:
+            info = self.challenge_rank_info
+            color = (255, 215, 0) # Gold
+        else:
+            info = "Awaiting response..."
+            color = COLORS["text_dim"]
+            
+        rt = self.fonts["body"].render(info, True, color)
+        self.screen.blit(rt, rt.get_rect(center=(card.centerx, card.y + 200)))
+        
+        # Help
+        h1 = self.fonts["body_sm"].render("Press [SPACE] to Try Again", True, COLORS["text"])
+        self.screen.blit(h1, h1.get_rect(center=(card.centerx, card.y + 280)))
+        
+        h2 = self.fonts["body_sm"].render("Press [ESC] to Exit", True, COLORS["text_dim"])
+        self.screen.blit(h2, h2.get_rect(center=(card.centerx, card.y + 310)))
+        
+        # Trigger submission once
+        if not self.challenge_submitting and not self.submission_complete:
+            self.challenge_submitting = True
+            threading.Thread(target=self._submit_challenge_score, daemon=True).start()
+
+    def _submit_challenge_score(self):
+        """Background thread to submit score and calculate local rank."""
+        try:
+            jutsu_name = self.jutsu_names[self.current_jutsu_idx]
+            username = self.username if self.username else "Guest"
+            
+            d_id = None
+            avatar_url = None
+            if self.discord_user:
+                d_id = self.discord_user.get("id")
+                avatar_hash = self.discord_user.get("avatar")
+                if d_id and avatar_hash:
+                    avatar_url = f"https://cdn.discordapp.com/avatars/{d_id}/{avatar_hash}.png?size=64"
+            
+            # 1. Submit
+            self.network_manager.submit_score(
+                username, 
+                self.challenge_final_time, 
+                mode=jutsu_name.upper(),
+                discord_id=d_id,
+                avatar_url=avatar_url
+            )
+            
+            # 2. Get Leadboard to find rank (simulated for immediate feedback)
+            # Fetch enough to find approximate rank
+            data = self.network_manager.get_leaderboard(limit=100, mode=jutsu_name.upper())
+            rank = -1
+            total = len(data)
+            
+            if data:
+                for i, row in enumerate(data):
+                    # Find our score
+                    if abs(row.get("score_time", 0) - self.challenge_final_time) < 0.001:
+                         rank = i + 1
+                         break
+                
+                if rank > 0:
+                    percentile = ((total - rank + 1) / total) * 100
+                    self.challenge_rank_info = f"Rank: #{rank} (Top {percentile:.0f}%)"
+                else:
+                    self.challenge_rank_info = "Rank: Top 100+"
+            else:
+                 self.challenge_rank_info = "Rank: #1 (First Record!)"
+                 
+        except Exception as e:
+            print(f"[!] Submission Error: {e}")
+            self.challenge_rank_info = "Error submitting score."
+        
+        self.challenge_submitting = False
+        self.submission_complete = True
+
     def render_playing(self, dt):
-        """Render game playing state."""
-        self.screen.fill(COLORS["bg_dark"])
+        """Render game playing state with Challenge Mode support."""
+        # 1. Background Logic (Uniform with Main Menu)
+        if hasattr(self, 'bg_image') and self.bg_image:
+             self.screen.blit(self.bg_image, (0, 0))
+             # Professional darken overlay to keep focus on camera feed
+             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+             overlay.fill((0, 0, 0, 180)) 
+             self.screen.blit(overlay, (0, 0))
+        else:
+             self.screen.fill(COLORS["bg_dark"])
         
         if self.cap is None or not self.cap.isOpened():
             return
@@ -2675,19 +2856,25 @@ class JutsuAcademy:
         # Flip for mirror
         frame = cv2.flip(frame, 1)
         
-        # 1. Detection Flow
-        detected = None
-        if not self.jutsu_active:
-            # Sequence Phase: Use YOLO for hand sign recognition (bounding boxes)
-            frame, detected = self.detect_and_process(frame)
-            # Keep MediaPipe idle or low-freq if not needed, but we often want it for smooth transition
-            # self.detect_hands(frame) 
-        else:
-            # Effect Phase: Disable YOLO/Bounding Boxes and switch to MediaPipe for precise tracking
-            self.detect_hands(frame)
-            self.detect_face(frame)
+        # 1. Challenge Mode Visibility
+        should_detect = True
+        if self.game_mode == "challenge":
+            if self.challenge_state in ["waiting", "countdown", "results"]:
+                should_detect = False
         
-        if not self.jutsu_active:
+        # 2. Detection Flow
+        detected = None
+        if should_detect:
+            if not self.jutsu_active:
+                # Sequence Phase: Use YOLO for hand sign recognition (bounding boxes)
+                frame, detected = self.detect_and_process(frame)
+            else:
+                # Effect Phase: switch to MediaPipe for precise tracking
+                self.detect_hands(frame)
+                self.detect_face(frame)
+        
+        # 3. Process Sequence
+        if not self.jutsu_active and should_detect:
             # Check sequence
             if self.current_step < len(self.sequence):
                 target = self.sequence[self.current_step]
@@ -2703,6 +2890,10 @@ class JutsuAcademy:
                             self.jutsu_start_time = time.time()
                             self.current_step = 0
                             self.play_sound("complete")
+                            
+                            # STOP TIMER if in challenge
+                            if self.game_mode == "challenge":
+                                self.challenge_final_time = self.jutsu_start_time - self.challenge_start_time
                             
                             jutsu_name = self.jutsu_names[self.current_jutsu_idx]
                             jutsu_data = self.jutsu_list[jutsu_name]
@@ -2726,9 +2917,9 @@ class JutsuAcademy:
                                 self.current_video = jutsu_name
                                 print(f"[+] Playing video: {video_path}")
         
-        # Camera position on screen
+        # Camera position on screen (Lowered for better top margin)
         cam_x = (SCREEN_WIDTH - 640) // 2
-        cam_y = 50
+        cam_y = 110
         
         # Update particles with correct screen position
         if self.fire_particles.emitting and self.mouth_pos:
@@ -2748,14 +2939,24 @@ class JutsuAcademy:
                 if self.video_cap:
                     self.video_cap.release()
                     self.video_cap = None
+                
+                # Check for results transition
+                if self.game_mode == "challenge":
+                    self.challenge_state = "results"
         
-        # Convert and display frame
+        # Convert and display frame with alpha blending for dimming
+        if self.game_mode == "challenge" and self.challenge_state in ["waiting", "countdown", "results"]:
+            # Dim the camera frame
+            frame = (frame.astype(np.float32) * 0.4).astype(np.uint8)
+            
         cam_surface = self.cv2_to_pygame(frame)
         
-        # Center camera (already calculated above)
+        # UI Frame for camera feed
+        pygame.draw.rect(self.screen, (30, 30, 40), (cam_x - 6, cam_y - 6, 652, 492), border_radius=14)
+        pygame.draw.rect(self.screen, COLORS["border"], (cam_x - 6, cam_y - 6, 652, 492), 2, border_radius=14)
+        
         self.screen.blit(cam_surface, (cam_x, cam_y))
         
-        # Atmospheric blue tint during Chidori
         if self.jutsu_active:
              jutsu_name = self.jutsu_names[self.current_jutsu_idx]
              if self.jutsu_list[jutsu_name].get("effect") == "lightning":
@@ -2766,6 +2967,34 @@ class JutsuAcademy:
         
         # Fire particles
         self.fire_particles.render(self.screen)
+        
+        # Timer Display (Challenge Mode Active) - Draw on top of frame but under results
+        if self.game_mode == "challenge" and self.challenge_state == "active":
+            if self.jutsu_active:
+                elapsed = self.challenge_final_time
+            else:
+                elapsed = time.time() - self.challenge_start_time
+            
+            # Speedrun Style Timer
+            time_str = f"{elapsed:.2f}s"
+            t_txt = self.fonts["title_sm"].render(f"SPEED: {time_str}", True, (255, 255, 255))
+            
+            # Simple dark backing
+            tw, th = t_txt.get_size()
+            t_bg = pygame.Surface((tw + 24, th + 12), pygame.SRCALPHA)
+            t_bg.fill((0, 0, 0, 140))
+            pygame.draw.rect(t_bg, COLORS["accent"], t_bg.get_rect(), 1, border_radius=6)
+            self.screen.blit(t_bg, (cam_x + 15, cam_y + 15))
+            self.screen.blit(t_txt, (cam_x + 27, cam_y + 21))
+
+        # --- Challenge Overlays (Top level) ---
+        if self.game_mode == "challenge":
+            if self.challenge_state == "waiting":
+                self._render_challenge_lobby(cam_x, cam_y)
+            elif self.challenge_state == "countdown":
+                self._render_challenge_countdown(cam_x, cam_y)
+            elif self.challenge_state == "results":
+                self._render_challenge_results(cam_x, cam_y)
         
         # Sound Scheduler
         if hasattr(self, "pending_sound") and self.pending_sound:
@@ -2823,62 +3052,111 @@ class JutsuAcademy:
         # Icon bar
         self._render_icon_bar(cam_x, cam_y + 490)
         
-        # Jutsu name
-        jutsu_name = self.jutsu_names[self.current_jutsu_idx]
-        name_surf = self.fonts["body"].render(jutsu_name, True, COLORS["accent"])
-        self.screen.blit(name_surf, (cam_x, cam_y - 40))
+        # Move Title (Styled Capsule)
+        jutsu_name = self.jutsu_names[self.current_jutsu_idx].upper()
+        name_surf = self.fonts["title_sm"].render(jutsu_name, True, (255, 255, 255))
+        tw, th = name_surf.get_size()
         
-        # FPS
+        padding_x, padding_y = 35, 10
+        title_rect = pygame.Rect(cam_x + (640 - tw - padding_x*2)//2, cam_y - 48, tw + padding_x*2, th + padding_y*2)
+        
+        # Subtle Glow
+        glow_rect = title_rect.inflate(6, 6)
+        glow_surf = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(glow_surf, (249, 115, 22, 30), (0, 0, glow_rect.width, glow_rect.height), border_radius=20)
+        self.screen.blit(glow_surf, glow_rect)
+        
+        pygame.draw.rect(self.screen, (20, 20, 25), title_rect, border_radius=18)
+        pygame.draw.rect(self.screen, COLORS["accent"], title_rect, 2, border_radius=18)
+        self.screen.blit(name_surf, (title_rect.centerx - tw//2, title_rect.centery - th//2))
+        
+        # FPS Counter (Styled)
         self.frame_count += 1
         if time.time() - self.fps_timer >= 1.0:
             self.fps = self.frame_count
             self.frame_count = 0
             self.fps_timer = time.time()
         
-        fps_surf = self.fonts["body"].render(f"FPS: {self.fps}", True, COLORS["success"])
-        self.screen.blit(fps_surf, (cam_x + 540, cam_y - 40))
+        fps_txt = f"FPS: {self.fps}"
+        fps_surf = self.fonts["tiny"].render(fps_txt, True, COLORS["success"])
+        self.screen.blit(fps_surf, (cam_x + 640 - fps_surf.get_width() - 5, cam_y - 18))
         
-        # Navigation arrows
-        if not self.jutsu_active:
-            # Left arrow
-            if self.arrow_icons["left"]:
-                self.screen.blit(self.arrow_icons["left"], (cam_x - 60, cam_y + 200))
-            else:
-                font_arrow = self.fonts["title_lg"]
-                left = font_arrow.render("◀", True, COLORS["accent"])
-                self.screen.blit(left, (cam_x - 60, cam_y + 200))
+        # Navigation arrows - Only show if not active and (if challenge) in waiting room
+        show_nav = not self.jutsu_active
+        if self.game_mode == "challenge" and self.challenge_state != "waiting":
+            show_nav = False
             
-            # Right arrow  
-            if self.arrow_icons["right"]:
-                self.screen.blit(self.arrow_icons["right"], (cam_x + 650, cam_y + 200))
+        if show_nav:
+            mouse_pos = pygame.mouse.get_pos()
+            arrow_y = cam_y + 200
+            
+            # Precise Hitboxes (Width/Height based on font/icon size)
+            self.left_arrow_rect = pygame.Rect(cam_x - 70, arrow_y, 60, 60)
+            self.right_arrow_rect = pygame.Rect(cam_x + 650, arrow_y, 60, 60)
+            
+            # Left Arrow Render
+            l_hover = self.left_arrow_rect.collidepoint(mouse_pos)
+            l_color = COLORS["accent_glow"] if l_hover else COLORS["accent"]
+            if l_hover: pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+            
+            if self.arrow_icons["left"]:
+                # If icon exists, we could tint it, but let's stick to the color logic for consistency
+                self.screen.blit(self.arrow_icons["left"], self.left_arrow_rect)
             else:
-                font_arrow = self.fonts["title_lg"]
-                right = font_arrow.render("▶", True, COLORS["accent"])
-                self.screen.blit(right, (cam_x + 650, cam_y + 200))
+                left_surf = self.fonts["title_lg"].render("◀", True, l_color)
+                # Center within hit zone
+                self.screen.blit(left_surf, (self.left_arrow_rect.centerx - left_surf.get_width()//2, self.left_arrow_rect.centery - left_surf.get_height()//2))
+
+            # Right Arrow Render
+            r_hover = self.right_arrow_rect.collidepoint(mouse_pos)
+            r_color = COLORS["accent_glow"] if r_hover else COLORS["accent"]
+            if r_hover: pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+                
+            if self.arrow_icons["right"]:
+                self.screen.blit(self.arrow_icons["right"], self.right_arrow_rect)
+            else:
+                right_surf = self.fonts["title_lg"].render("▶", True, r_color)
+                self.screen.blit(right_surf, (self.right_arrow_rect.centerx - right_surf.get_width()//2, self.right_arrow_rect.centery - right_surf.get_height()//2))
+        else:
+            if hasattr(self, "left_arrow_rect"): del self.left_arrow_rect
+            if hasattr(self, "right_arrow_rect"): del self.right_arrow_rect
         
         # ESC hint
         hint = self.fonts["body_sm"].render("Press ESC to exit", True, COLORS["text_muted"])
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - 60, SCREEN_HEIGHT - 30))
     
     def _render_icon_bar(self, x, y):
-        """Render the jutsu sequence icon bar."""
-        icon_size = 80
-        gap = 12
+        """Render the jutsu sequence icon bar with dynamic scaling."""
         n = len(self.sequence)
-        total_w = n * (icon_size + gap) - gap
+        max_icon_size = 80
+        gap = 12
+        max_total_w = 610 # padding within the 640 width
+        
+        # Calculate optimal icon size
+        icon_size = max_icon_size
+        total_w = n * icon_size + (n - 1) * gap
+        
+        if total_w > max_total_w:
+            icon_size = (max_total_w - (n - 1) * gap) // n
+            icon_size = max(40, icon_size) # Don't go too tiny
+            total_w = n * icon_size + (n - 1) * gap
+            
         start_x = x + (640 - total_w) // 2
         
         # Background panel
         panel_rect = pygame.Rect(x, y - 10, 640, 120)
         pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=12)
+        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=12)
         
-        # Status text
+        # Status text (Scale font if icons are tiny)
+        font_status = self.fonts["body"] if icon_size > 50 else self.fonts["body_sm"]
+        
         if self.jutsu_active:
             display = self.jutsu_list[self.jutsu_names[self.current_jutsu_idx]].get("display_text", "")
-            status = self.fonts["body"].render(display, True, COLORS["accent"])
+            status = self.fonts["title_sm"].render(display.upper(), True, COLORS["accent_glow"])
         else:
             target = self.sequence[self.current_step] if self.current_step < len(self.sequence) else ""
-            status = self.fonts["body"].render(f"Next: {target.upper()}", True, COLORS["text"])
+            status = font_status.render(f"NEXT SIGN: {target.upper()}", True, COLORS["text"])
         
         status_rect = status.get_rect(center=(x + 320, y))
         self.screen.blit(status, status_rect)
@@ -2886,7 +3164,9 @@ class JutsuAcademy:
         # Icons
         for i, sign in enumerate(self.sequence):
             ix = start_x + i * (icon_size + gap)
-            iy = y + 15
+            
+            # Center icons vertically if they are smaller than max
+            iy = y + 15 + (max_icon_size - icon_size) // 2
             
             # Border
             if i < self.current_step:
@@ -2896,7 +3176,11 @@ class JutsuAcademy:
             
             # Icon
             if sign in self.icons:
-                icon = self.icons[sign].copy()
+                icon_surf = self.icons[sign]
+                if icon_surf.get_width() != icon_size:
+                    icon_surf = pygame.transform.smoothscale(icon_surf, (icon_size, icon_size))
+                
+                icon = icon_surf.copy()
                 if i < self.current_step:
                     icon.set_alpha(100)
                 self.screen.blit(icon, (ix, iy))
@@ -2964,14 +3248,35 @@ class JutsuAcademy:
                         if not self.login_in_progress:
                             self.state = GameState.MENU
                 elif self.state == GameState.PLAYING:
-                    if event.key == pygame.K_LEFT:
+                    can_switch = not self.jutsu_active
+                    if self.game_mode == "challenge" and self.challenge_state != "waiting":
+                        can_switch = False
+                        
+                    if event.key == pygame.K_LEFT and can_switch:
                         self.switch_jutsu(-1)
-                    elif event.key == pygame.K_RIGHT:
+                    elif event.key == pygame.K_RIGHT and can_switch:
                         self.switch_jutsu(1)
                     elif event.key == pygame.K_r:
                         self.current_step = 0
                         self.jutsu_active = False
                         self.fire_particles.emitting = False
+                    elif event.key == pygame.K_SPACE:
+                        if self.game_mode == "challenge":
+                            if self.challenge_state == "waiting":
+                                self.challenge_state = "countdown"
+                                self.challenge_countdown_start = time.time()
+                                self.play_sound("click")
+                            elif self.challenge_state == "results":
+                                # Reset challenge
+                                self.challenge_state = "waiting"
+                                self.current_step = 0
+                                self.jutsu_active = False
+                                self.submission_complete = False
+                                self.challenge_rank_info = ""
+                                if self.video_cap:
+                                    self.video_cap.release()
+                                    self.video_cap = None
+                                self.current_video = None
             elif event.type == pygame.MOUSEWHEEL:
                 if self.state == GameState.ABOUT:
                     self.about_scroll_y -= event.y * 30
@@ -3216,16 +3521,20 @@ class JutsuAcademy:
         elif self.state == GameState.PLAYING:
             # Check arrow clicks
             cam_x = (SCREEN_WIDTH - 640) // 2
-            cam_y = 50
+            cam_y = 110 # Synchronized with render_playing margin
             
-            if mouse_click and not self.jutsu_active:
-                left_rect = pygame.Rect(cam_x - 70, cam_y + 180, 60, 60)
-                right_rect = pygame.Rect(cam_x + 650, cam_y + 180, 60, 60)
-                
-                if left_rect.collidepoint(mouse_pos):
+            # Switch gating: Disable if challenge is active/countdown
+            can_switch = not self.jutsu_active
+            if self.game_mode == "challenge" and self.challenge_state != "waiting":
+                can_switch = False
+
+            if mouse_click and can_switch:
+                if hasattr(self, "left_arrow_rect") and self.left_arrow_rect.collidepoint(mouse_pos):
                     self.switch_jutsu(-1)
-                elif right_rect.collidepoint(mouse_pos):
+                    self.play_sound("click")
+                elif hasattr(self, "right_arrow_rect") and self.right_arrow_rect.collidepoint(mouse_pos):
                     self.switch_jutsu(1)
+                    self.play_sound("click")
     
     def run(self):
         """Main game loop."""
