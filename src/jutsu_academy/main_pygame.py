@@ -495,10 +495,11 @@ class ProgressionManager:
             (10000, "HOKAGE")
         ]
         
-        self.load()
-        # If logged in (not Guest), try to fetch latest from cloud
         if self.username != "Guest" and self.network_manager:
+            # Mandate Cloud-Only for authenticated users to prevent local cheating
             threading.Thread(target=self.sync_from_cloud, daemon=True).start()
+        else:
+            self.load() # Guest mode can still use local persistence
 
     def sync_from_cloud(self):
         """Fetch latest XP and Level from Supabase."""
@@ -511,8 +512,9 @@ class ProgressionManager:
                 self.level = profile.get("level", 0)
                 self.rank = profile.get("rank", "Academy Student")
                 self.update_rank()
-                self.save() # Update local cache
-                print(f"[*] Cloud Sync Success: Restored Lv.{self.level} progression for {self.username}")
+                # We do NOT save() to a local file for authenticated users 
+                # to ensure there's no cheatable local JSON.
+                print(f"[*] Cloud Sync Success: Retrieved Lv.{self.level} for {self.username}")
         else:
             # No cloud profile found -> This is a new user (or offline progress to sync up)
             print(f"[*] New cloud user: Creating profile for {self.username}")
@@ -574,6 +576,10 @@ class ProgressionManager:
                 break
 
     def save(self):
+        """Saves progression to local JSON (Guest only)."""
+        if self.username != "Guest":
+             return # Logged in users use Cloud Sync only
+        
         try:
             data = {
                 "xp": self.xp,
@@ -586,6 +592,10 @@ class ProgressionManager:
         except: pass
 
     def load(self):
+        """Loads progression from local JSON (Guest only)."""
+        if self.username != "Guest":
+            return # Authenticated users load from sync_from_cloud()
+            
         if self.file_path.exists():
             try:
                 with open(self.file_path, "r") as f:

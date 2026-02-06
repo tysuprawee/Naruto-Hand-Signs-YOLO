@@ -1,16 +1,16 @@
-# Jutsu Academy (v1.00 Prototype)
+# Jutsu Academy (v1.0.0 "Shinobi Path" Update)
 
 A complete Python project for training and running a YOLO model to recognize Naruto hand signs from a webcam.
 
 ## 🎯 Overview
 
 This project allows you to:
-1. **Capture** images of hand signs using your webcam
-2. **Label** images externally (e.g., with Roboflow)
-3. **Train** a YOLO model on your custom dataset
-4. **Detect** hand signs in real-time with bounding boxes and labels
+1. **Train** in the **Jutsu Academy** with a modern Pygame interface
+2. **Master** complex 2-handed jutsu sequences
+3. **Progress** your Shinobi Rank (Academy Student → Hokage)
+4. **Inclusive Detection**: Experience a model that works for **every skin tone**
 
-| YOLO Detection | Jutsu Trainer |
+| (OLD) YOLO Detection | Jutsu Academy (NEW) |
 |:---:|:---:|
 | <img src="https://github.com/user-attachments/assets/875e8229-59b6-4af2-bef4-2477125515f0" width="400"> | <img src="https://github.com/user-attachments/assets/76461e53-4c9e-4124-bd58-9d2b47caccdf" width="400"> |
 
@@ -32,44 +32,28 @@ This project allows you to:
 
 ## 📁 Project Structure
 
-```
-naruto_handsigns_yolo/
-├── src/
-│   ├── capture_dataset.py   # Webcam capture script
-│   ├── manual_labeler.py    # Native labeling tool (OpenCV based)
-│   ├── process_dataset.py   # Auto-labeling & dataset splitting
-│   ├── check_labels.py      # Label verification tool
-│   ├── train.py             # YOLO training script
-│   ├── detect_webcam.py     # Real-time detection script
-│   ├── jutsu_trainer.py     # Interactive Jutsu Trainer (main feature!)
-│   ├── recipe.txt           # Configurable Jutsu logic & sequences
-│   ├── pics/                # Hand sign icons for UI
-│   ├── sounds/              # Sound effects (jutsu sounds, feedback)
-│   ├── chidori/             # Chidori video and sound effect resources
-│   └── utils/
-│       ├── paths.py         # Centralized path handling
-│       ├── visualization.py # Drawing helpers
-│       └── fire_effect.py   # Procedural fire effect rendering
-├── dataset/
-│   ├── images/
-│   │   ├── raw/             # Initial captures (organized by class)
-│   │   ├── train/           # Training images (processed)
-│   │   └── val/             # Validation images (processed)
-│   └── labels/
-│       ├── train/           # Training labels (.txt files)
-│       └── val/             # Validation labels (.txt files)
-├── yolo_config/
-│   └── data.yaml            # YOLO dataset configuration
-├── models/
-│   ├── runs/                # Training results and weights
-│   ├── face_landmarker.task # MediaPipe face model (optional)
-│   └── hand_landmarker.task # MediaPipe hand model (optional)
-├── requirements.txt
-└── README.md
-```
+The project is organized into modular systems to handle the game, the AI, and the visual effects separately.
 
-### Example Training Results
-Here is an example of validation batch predictions showing the model confidently detecting hand signs.
+### 🎓 1. The Academy (Main Game)
+*   **`src/jutsu_academy/main_pygame.py`**: **The Heart of the Project**. This is the main launcher and game. It handles the futuristic UI, Discord Login, 3D Hand Skeletons, and the "Shinobi Path" progression system.
+*   **`src/jutsu_academy/network_manager.py`**: **Cloud Sync**. Handles communication with Supabase for XP leveling, leaderboards, and fetching global announcements.
+*   **`src/jutsu_registry.py`**: **The Encyclopedia**. Contains all Jutsus, their required hand sign sequences, and their minimum rank/level requirements.
+
+### 🧠 2. The AI Brain (Detection)
+*   **`src/mp_trainer.py`**: **The New Way**. Converts your hand movements into 126 mathematical points and uses a KNN model to identify the signs. This ensures the model works for **all skin tones**.
+*   **`src/train.py`** & **`src/process_dataset.py`**: **Legacy Trainers**. Older scripts used to train the pixel-based YOLOv8 model (kept for backward compatibility).
+*   **`src/capture_dataset.py`**: **Data Collection**. A tool to quickly capture hundreds of photos of your hands to train the AI on new signs.
+
+### 🎥 3. Effects & Visuals
+*   **`src/utils/paths.py`**: **GPS**. A central utility that tells the code exactly where sounds, videos, and model weights are located.
+*   **`src/utils/fire_effect.py`**: **Element FX**. The procedural math behind the Fireball and Phoenix Flower effects.
+*   **`src/utils/visualization.py`**: **Drawing Library**. Helper functions for rendering boxes, text, and meshes on the webcam feed.
+
+### 🌐 4. Infrastructure
+*   **`src/backend_server.py`**: **Web API**. A Flask server that allows the game to interact with web dashboards or external apps.
+
+### (OLD) Example YOLO Training Results
+Here is an example of validation batch predictions from the legacy YOLO system.
 <img src="https://github.com/user-attachments/assets/875e8229-59b6-4af2-bef4-2477125515f0" width="800" alt="Training Validation Results"/>
 
 #### Training Metrics
@@ -80,6 +64,18 @@ The charts above show the training progress:
 - **Class Loss**: Accuracy of identifying correct hand signs (lower is better).
 - **mAP50**: Overall precision at 50% overlap (higher is better, >0.9 is excellent).
 - **mAP50-95**: Strict precision across multiple thresholds (higher is better).
+
+---
+
+## 🌟 The "Hokage for Everyone" Update (Universal Model)
+
+We have retired the primary YOLO pixel-based detection in favor of a **3D Geometry Landmark Model (via MediaPipe)**. 
+
+### Why the change?
+- **Universal Inclusivity**: The old YOLO model relied on pixel colors, which could lead to inconsistent detection across different skin tones or lighting conditions.
+- **Geometric Precision**: The new model tracks 126 unique hand landmarks. It is **color-blind**—focusing only on the *shape* and *structure* of your hands.
+*   **Performance**: Faster inference on almost all hardware (CPUs/Laptops).
+*   **Robustness**: Works perfectly in low light and complex backgrounds where pixel-based models used to fail.
 
 ---
 
