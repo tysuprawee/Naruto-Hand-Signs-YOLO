@@ -38,7 +38,7 @@ import mediapipe as mp
 
 from src.utils.paths import get_class_names, get_latest_weights
 from src.jutsu_registry import OFFICIAL_JUTSUS
-from src.jutsu_registry import OFFICIAL_JUTSUS
+from src.mp_trainer import SignRecorder
 
 # Safe Import NetworkManager
 try:
@@ -657,7 +657,9 @@ class JutsuAcademy:
             "music_vol": 0.5,
             "sfx_vol": 0.7,
             "camera_idx": 0,
-            "debug_hands": False
+            "debug_hands": False,
+            "use_mediapipe_signs": True, # NEW: Toggle between YOLO and MediaPipe
+            "restricted_signs": False     # NEW: Only detect when 2 hands are visible
         }
         self.load_settings()
         
@@ -692,6 +694,7 @@ class JutsuAcademy:
         
         # ML Models (lazy loaded)
         self.model = None
+        self.recorder = SignRecorder() # MediaPipe + KNN
         
         # Connection Monitor
         self.connection_fail_count = 0
@@ -746,6 +749,10 @@ class JutsuAcademy:
         self.challenge_rank_info = ""
         self.challenge_submitting = False
         self.submission_complete = False
+        
+        # Modal Rects (Pre-initialize to avoid first-frame click fails)
+        self.welcome_ok_rect = pygame.Rect(0, 0, 0, 0)
+        self.welcome_modal_timer = 0.0 # For animations
         
         # Tracking & Smoothing
         self.mouth_pos = None
@@ -1310,22 +1317,26 @@ class JutsuAcademy:
         self.mute_button_rect = pygame.Rect(SCREEN_WIDTH - 60, 20, 40, 40)
     
     def _create_settings_ui(self):
-        """Create settings UI."""
+        
+        # Settings Page UI
         cx = SCREEN_WIDTH // 2
+        cy = 180
         
         self.settings_sliders = {
-            "music": Slider(cx - 150, 250, 300, "Music Volume", self.settings["music_vol"]),
-            "sfx": Slider(cx - 150, 330, 300, "SFX Volume", self.settings["sfx_vol"]),
+            "music": Slider(cx - 150, cy + 40, 300, "Music Volume", self.settings["music_vol"]),
+            "sfx": Slider(cx - 150, cy + 120, 300, "SFX Volume", self.settings["sfx_vol"]),
         }
         
-        self.camera_dropdown = Dropdown(cx - 150, 420, 300, self.cameras, self.settings["camera_idx"])
+        self.camera_dropdown = Dropdown(cx - 50, cy + 200, 200, self.cameras, self.settings["camera_idx"])
         
         self.settings_checkboxes = {
-            "debug_hands": Checkbox(cx - 150, 480, 24, "Show Hand Skeleton (MediaPipe)", self.settings.get("debug_hands", False))
+            "debug_hands": Checkbox(cx - 150, cy + 260, 24, "Show Hand Skeleton", self.settings["debug_hands"]),
+            "use_mp": Checkbox(cx - 150, cy + 300, 24, "Use MediaPipe AI (Faster/Experimental)", self.settings["use_mediapipe_signs"]),
+            "restricted": Checkbox(cx - 150, cy + 340, 24, "Restricted Signs (Require 2 Hands)", self.settings.get("restricted_signs", False)),
         }
         
         self.settings_buttons = {
-            "back": Button(cx - 100, 550, 200, 50, "SAVE & BACK"),
+            "back": Button(cx - 100, cy + 400, 200, 50, "SAVE & BACK"),
         }
     
     def _create_practice_select_ui(self):
@@ -1390,7 +1401,7 @@ class JutsuAcademy:
                 base_options = python.BaseOptions(model_asset_path=str(hand_path))
                 options = vision.HandLandmarkerOptions(
                     base_options=base_options,
-                    num_hands=1,
+                    num_hands=2,
                     running_mode=vision.RunningMode.VIDEO
                 )
                 self.hand_landmarker = vision.HandLandmarker.create_from_options(options)
@@ -1587,57 +1598,48 @@ class JutsuAcademy:
             if result.hand_landmarks:
                 self.hand_lost_frames = 0
                 h, w = frame.shape[:2]
-                landmarks = result.hand_landmarks[0] # Take first hand
                 
-                # 1. Base Position (Centroid of Wrist + All Knuckles)
+                # 1. Primary Hand logic for effects (using the first hand)
+                primary_landmarks = result.hand_landmarks[0]
+                
+                # Base Position (Centroid of Wrist + All Knuckles)
                 indices = [0, 5, 9, 13, 17]
-                base_x = sum(landmarks[i].x for i in indices) / len(indices)
-                base_y = sum(landmarks[i].y for i in indices) / len(indices)
+                base_x = sum(primary_landmarks[i].x for i in indices) / len(indices)
+                base_y = sum(primary_landmarks[i].y for i in indices) / len(indices)
 
-                # 2. Compute Palm Normal (Wrist -> Index, Wrist -> Pinky) using vector math
-                def to_vec(idx):
+                # Palm Normal for offsetting effect
+                def to_vec(landmarks, idx):
                     lm = landmarks[idx]
                     return np.array([lm.x, lm.y, lm.z])
                 
-                v1 = to_vec(5) - to_vec(0)  # Wrist to Index
-                v2 = to_vec(17) - to_vec(0) # Wrist to Pinky
+                v1 = to_vec(primary_landmarks, 5) - to_vec(primary_landmarks, 0)
+                v2 = to_vec(primary_landmarks, 17) - to_vec(primary_landmarks, 0)
                 normal = np.cross(v1, v2)
                 mag = np.linalg.norm(normal)
-                if mag > 1e-6: normal /= mag # Normalize
+                if mag > 1e-6: normal /= mag
                 
-                # 3. Apply Dynamic Offset based on Orientation & Handedness
-                # The normal points "out" of the palm. Overwriting user mirror flip.
-                offset_strength = 0.25 # Strong push to the forehand
-                
-                # Check Handedness from result
+                offset_strength = 0.25
                 if result.handedness:
                     label = result.handedness[0][0].category_name
-                    # If label is "Left" (Physical Right in mirror), use negative offset
-                    if label == "Left":
-                        offset_strength = -0.25
+                    if label == "Left": offset_strength = -0.25
 
-                target_offset_x = normal[0] * offset_strength
-                target_offset_y = normal[1] * offset_strength
+                target_x = (base_x + normal[0] * offset_strength) * w
+                target_y = (base_y + normal[1] * offset_strength) * h
                 
-                target_x = (base_x + target_offset_x) * w
-                target_y = (base_y + target_offset_y) * h
-                
-                # 4. Temporal Smoothing (Stronger smoothing for "glue" effect)
+                # Temporal Smoothing
                 if self.smooth_hand_pos is None:
                     self.smooth_hand_pos = (target_x, target_y)
                 else:
-                    # 0.08 is very smooth but keeps it attached
                     alpha = 0.08 
                     curr_x, curr_y = self.smooth_hand_pos
-                    new_x = curr_x + (target_x - curr_x) * alpha
-                    new_y = curr_y + (target_y - curr_y) * alpha
-                    self.smooth_hand_pos = (new_x, new_y)
+                    self.smooth_hand_pos = (curr_x + (target_x - curr_x) * alpha, 
+                                            curr_y + (target_y - curr_y) * alpha)
                 
                 self.hand_pos = self.smooth_hand_pos
+                self.last_mp_result = result
                 
-                # Draw Skeleton if enabled
+                # 2. Draw Skeletons for ALL detected hands
                 if self.settings.get("debug_hands", False):
-                    # Define hand connections manually 
                     CONNECTIONS = [
                         (0,1), (1,2), (2,3), (3,4), # Thumb
                         (0,5), (5,6), (6,7), (7,8), # Index
@@ -1645,19 +1647,20 @@ class JutsuAcademy:
                         (9,13), (13,14), (14,15), (15,16), # Ring
                         (13,17), (17,18), (18,19), (19,20), (0,17) # Pinky + Palm
                     ]
-                    # Draw points
-                    for lm in landmarks:
-                        cx, cy = int(lm.x * w), int(lm.y * h)
-                        cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
-                        cv2.circle(frame, (cx, cy), 1, (255, 255, 255), -1)
                     
-                    # Draw lines
-                    for conn in CONNECTIONS:
-                        p1 = landmarks[conn[0]]
-                        p2 = landmarks[conn[1]]
-                        x1, y1 = int(p1.x * w), int(p1.y * h)
-                        x2, y2 = int(p2.x * w), int(p2.y * h)
-                        cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    for hand_idx, landmarks in enumerate(result.hand_landmarks):
+                        # Use different color for second hand if desired (optional)
+                        color = (0, 255, 0) # Primary Green
+                        
+                        for lm in landmarks:
+                            cx, cy = int(lm.x * w), int(lm.y * h)
+                            cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+                            cv2.circle(frame, (cx, cy), 1, (255, 255, 255), -1)
+                        
+                        for conn in CONNECTIONS:
+                            p1, p2 = landmarks[conn[0]], landmarks[conn[1]]
+                            cv2.line(frame, (int(p1.x * w), int(p1.y * h)), 
+                                            (int(p2.x * w), int(p2.y * h)), color, 2)
             else:
                 self.hand_lost_frames += 1
                 # Increase hold time to 30 frames (~1 sec at 30fps)
@@ -1831,45 +1834,59 @@ class JutsuAcademy:
         version = self.fonts["tiny"].render(f"v{APP_VERSION}", True, (255, 255, 255, 100))
         self.screen.blit(version, (SCREEN_WIDTH - 120, SCREEN_HEIGHT - 35))
 
-        # 4. Profile / Auth Status (Top Left) (Moved down to draw OVER background elements if needed)
-        self.profile_rect = pygame.Rect(20, 20, 240, 60)
+        # 4. Profile / Auth Status (Top Left)
+        self.profile_rect = pygame.Rect(20, 20, 300, 95) # Larger for XP details
         profile_hovered = self.profile_rect.collidepoint(mouse_pos)
         
-        # Draw Profile Container (Subtle)
-        bg_color = (20, 20, 25, 180) if profile_hovered else (20, 20, 25, 100)
+        # Draw Profile Container (Subtle Glassmorphism)
+        bg_color = (20, 20, 25, 200) if profile_hovered else (20, 20, 25, 140)
         profile_surf = pygame.Surface(self.profile_rect.size, pygame.SRCALPHA)
-        pygame.draw.rect(profile_surf, bg_color, profile_surf.get_rect(), border_radius=12)
-        pygame.draw.rect(profile_surf, (255, 255, 255, 30), profile_surf.get_rect(), 1, border_radius=12)
+        pygame.draw.rect(profile_surf, bg_color, profile_surf.get_rect(), border_radius=15)
+        pygame.draw.rect(profile_surf, (255, 255, 255, 40), profile_surf.get_rect(), 1, border_radius=15)
         self.screen.blit(profile_surf, self.profile_rect)
-        
-
         
         # Avatar
         if self.user_avatar:
-            self.screen.blit(self.user_avatar, (self.profile_rect.x + 15, self.profile_rect.y + 10))
+            self.screen.blit(self.user_avatar, (self.profile_rect.x + 15, self.profile_rect.y + 12))
         else:
             # Guest Icon
-            guest_rect = pygame.Rect(self.profile_rect.x + 15, self.profile_rect.y + 10, 40, 40)
-            pygame.draw.rect(self.screen, (60, 60, 70), guest_rect, border_radius=8)
+            guest_rect = pygame.Rect(self.profile_rect.x + 15, self.profile_rect.y + 12, 40, 40)
+            pygame.draw.rect(self.screen, (60, 60, 70), guest_rect, border_radius=10)
             icon = self.fonts["body_sm"].render("?", True, COLORS["text_dim"])
-            self.screen.blit(icon, icon.get_rect(center=(self.profile_rect.x + 35, self.profile_rect.y + 30)))
+            self.screen.blit(icon, icon.get_rect(center=(self.profile_rect.x + 35, self.profile_rect.y + 32)))
 
-        # Name & Status
+        # Name & Rank Info
         name_str = self.username if self.username else "Guest"
-        if len(name_str) > 12: name_str = name_str[:12] + "..."
-        
-        name_render = self.fonts["body_sm"].render(name_str, True, COLORS["text"])
+        if len(name_str) > 15: name_str = name_str[:15] + "..."
+        name_render = self.fonts["body"].render(name_str, True, COLORS["text"])
         self.screen.blit(name_render, (self.profile_rect.x + 70, self.profile_rect.y + 12))
         
-        if self.discord_user:
-            status_text = "Online"
-            status_color = COLORS["success"]
-        else:
-            status_text = "Guest Mode"
-            status_color = COLORS["text_dim"]
-            
-        status_render = self.fonts["tiny"].render(status_text, True, status_color)
-        self.screen.blit(status_render, (self.profile_rect.x + 70, self.profile_rect.y + 34))
+        rank_lv_str = f"{self.progression.rank} • LV.{self.progression.level}"
+        rank_lv_render = self.fonts["tiny"].render(rank_lv_str.upper(), True, COLORS["accent_glow"])
+        self.screen.blit(rank_lv_render, (self.profile_rect.x + 70, self.profile_rect.y + 36))
+
+        # XP Progress Bar
+        bar_w, bar_h = 210, 8
+        bar_x, bar_y = self.profile_rect.x + 70, self.profile_rect.y + 60
+        
+        prev_lv_xp = self.progression.get_xp_for_level(self.progression.level)
+        next_lv_xp = self.progression.get_xp_for_level(self.progression.level + 1)
+        xp_needed = max(1, next_lv_xp - prev_lv_xp)
+        xp_current = self.progression.xp - prev_lv_xp
+        progress = max(0, min(1, xp_current / xp_needed))
+
+        # Track
+        pygame.draw.rect(self.screen, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+        if progress > 0:
+            # Filled part
+            pygame.draw.rect(self.screen, COLORS["accent"], (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=4)
+            # Gloss/Shine
+            pygame.draw.rect(self.screen, (255, 255, 255, 40), (bar_x, bar_y, int(bar_w * progress), bar_h // 2), border_radius=4)
+
+        # XP Label
+        xp_label_str = f"{self.progression.xp} / {next_lv_xp} XP"
+        xp_render = self.fonts["tiny"].render(xp_label_str, True, COLORS["text_dim"])
+        self.screen.blit(xp_render, (bar_x, bar_y + 12))
 
         # ─── New: Announcement Overlay Logic ───
         # Auto-show logic
@@ -2096,83 +2113,115 @@ class JutsuAcademy:
         if quit_hover or cancel_hover:
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
 
-    def render_welcome_modal(self):
-        """Render the welcome success modal."""
-        # 1. Dark overlay (Heavier for focus)
+    def render_welcome_modal(self, dt):
+        """Render the welcome success modal with premium aesthetics."""
+        self.welcome_modal_timer += dt
+        
+        # 1. Dark overlay with subtle blur-like darkening
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 240)) # Very dark bg
+        overlay.fill((10, 10, 15, 230)) # Extra dark blue-ish
         self.screen.blit(overlay, (0, 0))
         
-        # 2. Modal Box - Glassmorphism style
-        modal_w, modal_h = 520, 380
+        # 2. Modal Dimensions
+        modal_w, modal_h = 560, 420
         modal_x = (SCREEN_WIDTH - modal_w) // 2
         modal_y = (SCREEN_HEIGHT - modal_h) // 2
         modal_rect = pygame.Rect(modal_x, modal_y, modal_w, modal_h)
         
-        # Panel Shadow/Glow
-        shadow_surf = pygame.Surface((modal_w + 40, modal_h + 40), pygame.SRCALPHA)
-        # Use theme success color for glow, but transparent
-        glow_color = (*COLORS["success"], 40) 
-        pygame.draw.rect(shadow_surf, glow_color, shadow_surf.get_rect(), border_radius=30)
-        self.screen.blit(shadow_surf, (modal_x - 20, modal_y - 20))
+        # --- Shadow & Outer Glow ---
+        for i in range(15, 0, -1):
+            alpha = int(25 * (1 - i/15))
+            glow_rect = modal_rect.inflate(i*2, i*2)
+            pygame.draw.rect(self.screen, (*COLORS["success"], alpha), glow_rect, border_radius=30 + i)
 
-        # Background (Dark semi-transparent)
-        modal_surf = pygame.Surface((modal_w, modal_h), pygame.SRCALPHA)
-        pygame.draw.rect(modal_surf, (30, 30, 35, 255), modal_surf.get_rect(), border_radius=20)
-        pygame.draw.rect(modal_surf, (50, 50, 55, 255), modal_surf.get_rect(), 1, border_radius=20)
-        self.screen.blit(modal_surf, (modal_x, modal_y))
+        # 3. Main Glass Content
+        modal_bg = pygame.Surface((modal_w, modal_h), pygame.SRCALPHA)
+        # Deep dark gradient-like fill
+        pygame.draw.rect(modal_bg, (20, 20, 25, 255), modal_bg.get_rect(), border_radius=25)
+        # Subtle top-light
+        pygame.draw.rect(modal_bg, (60, 60, 70, 255), modal_bg.get_rect(), 2, border_radius=25)
+        self.screen.blit(modal_bg, (modal_x, modal_y))
         
-        # Avatar (Large)
-        avatar_y_center = modal_y + 80
+        # --- Avatar Section ---
+        center_x = modal_x + modal_w // 2
+        avatar_y = modal_y + 90
+        
+        # Circular Background for Avatar
+        pygame.draw.circle(self.screen, (15, 15, 20), (center_x, avatar_y), 65)
+        
+        # Pulsing ring around avatar
+        pulse = (math.sin(self.welcome_modal_timer * 4) + 1) / 2
+        ring_size = 65 + int(pulse * 10)
+        ring_alpha = int(100 * (1 - pulse))
+        if ring_alpha > 0:
+            ring_surf = pygame.Surface((ring_size*2, ring_size*2), pygame.SRCALPHA)
+            pygame.draw.circle(ring_surf, (*COLORS["success"], ring_alpha), (ring_size, ring_size), ring_size, 3)
+            self.screen.blit(ring_surf, (center_x - ring_size, avatar_y - ring_size))
+
         if self.user_avatar:
-            # Scale avatar up nicely
-            scaled_avatar = pygame.transform.smoothscale(self.user_avatar, (110, 110))
-            avatar_rect = scaled_avatar.get_rect(center=(modal_x + modal_w//2, avatar_y_center))
+            # Scale and blit avatar
+            av_size = 110
+            scaled_avatar = pygame.transform.smoothscale(self.user_avatar, (av_size, av_size))
+            av_rect = scaled_avatar.get_rect(center=(center_x, avatar_y))
             
-            # Draw glow behind avatar
-            pygame.draw.circle(self.screen, glow_color, avatar_rect.center, 65)
-            
-            # Draw circle mask/border
-            pygame.draw.circle(self.screen, COLORS["success"], avatar_rect.center, 57) # Outer ring
-            pygame.draw.circle(self.screen, (20, 20, 20), avatar_rect.center, 55) # Inner border
-            self.screen.blit(scaled_avatar, avatar_rect)
+            # Mask border
+            pygame.draw.circle(self.screen, COLORS["success"], (center_x, avatar_y), 60, 3)
+            self.screen.blit(scaled_avatar, av_rect)
         else:
-             # Default icon if no avatar
-             pygame.draw.circle(self.screen, COLORS["bg_card"], (modal_x + modal_w//2, avatar_y_center), 55)
-             pygame.draw.circle(self.screen, COLORS["success"], (modal_x + modal_w//2, avatar_y_center), 57, 2)
+             # Default generic icon
+             pygame.draw.circle(self.screen, COLORS["bg_card"], (center_x, avatar_y), 55)
+             pygame.draw.circle(self.screen, COLORS["success"], (center_x, avatar_y), 58, 2)
         
-        # Title - moved down to avoid overlap
+        # --- Text Content ---
         username = self.username if self.username else "Shinobi"
-        title = self.fonts["title_md"].render(f"WELCOME, {username.upper()}", True, (255, 255, 255))
-        title_rect = title.get_rect(center=(modal_x + modal_w//2, avatar_y_center + 90)) # Gap increased
-        self.screen.blit(title, title_rect)
+        title_txt = f"WELCOME, {username.upper()}"
+        title_surf = self.fonts["title_md"].render(title_txt, True, (255, 255, 255))
+        title_rect = title_surf.get_rect(center=(center_x, avatar_y + 95))
         
-        # Message
-        msg = self.fonts["body"].render("Access Granted. Academy protocols initialized.", True, COLORS["success"])
-        msg_rect = msg.get_rect(center=(modal_x + modal_w//2, title_rect.bottom + 30))
-        self.screen.blit(msg, msg_rect)
-            
-        # Continue Button
-        btn_w, btn_h = 240, 60
-        btn_y = modal_y + modal_h - 90
+        # Subtle title shadow
+        shadow_surf = self.fonts["title_md"].render(title_txt, True, (0, 0, 0))
+        self.screen.blit(shadow_surf, (title_rect.x + 2, title_rect.y + 2))
+        self.screen.blit(title_surf, title_rect)
+        
+        # Status Message
+        status_txt = "Access Granted. Academy protocols initialized."
+        msg_surf = self.fonts["body"].render(status_txt, True, COLORS["text_dim"])
+        msg_rect = msg_surf.get_rect(center=(center_x, title_rect.bottom + 25))
+        self.screen.blit(msg_surf, msg_rect)
+        
+        # --- Enter Button ---
+        btn_w, btn_h = 280, 65
+        btn_x = modal_x + (modal_w - btn_w) // 2
+        btn_y = modal_y + modal_h - 100
+        self.welcome_ok_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+        
         mouse_pos = pygame.mouse.get_pos()
+        hover = self.welcome_ok_rect.collidepoint(mouse_pos)
         
-        self.welcome_ok_rect = pygame.Rect(modal_x + (modal_w - btn_w)//2, btn_y, btn_w, btn_h)
-        ok_hover = self.welcome_ok_rect.collidepoint(mouse_pos)
+        # Button Shadow
+        pygame.draw.rect(self.screen, (0, 0, 0, 80), (btn_x + 4, btn_y + 4, btn_w, btn_h), border_radius=15)
         
-        # Button Glow
-        if ok_hover:
-             border_glow = (*COLORS["success"], 100)
-             pygame.draw.rect(self.screen, border_glow, self.welcome_ok_rect.inflate(6, 6), border_radius=12)
-        
-        btn_color = COLORS["success"] if ok_hover else (30, 120, 70) # Darker green normally
-        pygame.draw.rect(self.screen, btn_color, self.welcome_ok_rect, border_radius=10)
-        
-        ok_txt = self.fonts["title_sm"].render("ENTER ACADEMY", True, (255, 255, 255))
-        self.screen.blit(ok_txt, ok_txt.get_rect(center=self.welcome_ok_rect.center))
-        
-        if ok_hover:
+        # Button Body
+        base_color = COLORS["success"] if not hover else COLORS["success"]
+        if hover:
+            # Brighten slightly on hover
+            base_color = tuple(min(255, c + 30) for c in base_color)
+            pygame.draw.rect(self.screen, (*COLORS["success"], 100), self.welcome_ok_rect.inflate(8, 8), border_radius=18, width=2)
             pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+
+        pygame.draw.rect(self.screen, base_color, self.welcome_ok_rect, border_radius=15)
+        
+        # Inner gloss/shine for button
+        shine_rect = pygame.Rect(btn_x + 5, btn_y + 5, btn_w - 10, btn_h // 2.5)
+        pygame.draw.rect(self.screen, (255, 255, 255, 40), shine_rect, border_radius=12)
+        
+        # Button Text
+        btn_txt = self.fonts["title_sm"].render("ENTER ACADEMY", True, (255, 255, 255))
+        self.screen.blit(btn_txt, btn_txt.get_rect(center=self.welcome_ok_rect.center))
+        
+        # Fallback hint
+        hint = self.fonts["tiny"].render("Press SPACE to continue", True, (100, 100, 110))
+        self.screen.blit(hint, hint.get_rect(center=(center_x, btn_y + btn_h + 25)))
 
     def render_error_modal(self):
         """Render a generic error modal."""
@@ -2357,7 +2406,7 @@ class JutsuAcademy:
         self.screen.blit(title, title_rect)
         
         # Panel
-        panel_rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, 150, 400, 350)
+        panel_rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, 150, 400, 390)
         pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=16)
         
         # Sliders
@@ -2955,20 +3004,19 @@ class JutsuAcademy:
 
     
     # ─── Challenge Mode Helpers ───
-    def _render_challenge_lobby(self, cam_x, cam_y):
+    def _render_challenge_lobby(self, cam_x, cam_y, cam_w, cam_h):
         """Draw dimmed lobby with 'Press SPACE to Start'."""
-        overlay = pygame.Surface((640, 480), pygame.SRCALPHA)
+        overlay = pygame.Surface((cam_w, cam_h), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 160))
         self.screen.blit(overlay, (cam_x, cam_y))
         
         # Text
         txt = self.fonts["title_md"].render("PRESS [SPACE] TO START", True, COLORS["accent_glow"])
-        rect = txt.get_rect(center=(cam_x + 320, cam_y + 200))
+        rect = txt.get_rect(center=(cam_x + cam_w // 2, cam_y + cam_h // 2 - 40))
         self.screen.blit(txt, rect)
         
         sub = self.fonts["body"].render("Perform the sequence as FAST as possible!", True, COLORS["text_dim"])
-        self.screen.blit(sub, sub.get_rect(center=(cam_x + 320, cam_y + 260)))
-        
+        self.screen.blit(sub, sub.get_rect(center=(cam_x + cam_w // 2, cam_y + cam_h // 2 + 20)))
         rules = [
             "1. Timer starts on 'GO!'",
             "2. Detect all hand signs in order.",
@@ -2976,43 +3024,36 @@ class JutsuAcademy:
         ]
         for i, r in enumerate(rules):
             rt = self.fonts["body_sm"].render(r, True, COLORS["text"])
-            self.screen.blit(rt, rt.get_rect(center=(cam_x + 320, cam_y + 320 + i*25)))
+            self.screen.blit(rt, rt.get_rect(center=(cam_x + cam_w // 2, cam_y + cam_h // 2 + 80 + i*25)))
 
-    def _render_challenge_countdown(self, cam_x, cam_y):
+    def _render_challenge_countdown(self, cam_x, cam_y, cam_w, cam_h):
         """Draw big countdown in center."""
         elapsed = time.time() - self.challenge_countdown_start
         remaining = 3 - int(elapsed)
         
         if remaining > 0:
-            # Pulsing effect
-            # fractional part for scaling
-            # frac = 1.0 - (elapsed % 1.0) 
-            # size = int(120 + 80 * frac)
-            # font = pygame.font.Font(None, size)
-            
-            # Use default font with fixed larger size for countdown
             frac = 1.0 - (elapsed % 1.0) 
-            size = int(120 * (1.0 + 0.5 * frac)) # Scale up from 120
+            size = int(120 * (1.0 + 0.5 * frac)) 
             font = pygame.font.Font(None, size) 
             
-            txt = font.render(str(remaining), True, (255, 255, 0)) # Yellow
-            rect = txt.get_rect(center=(cam_x + 320, cam_y + 240))
+            txt = font.render(str(remaining), True, (255, 255, 0)) 
+            rect = txt.get_rect(center=(cam_x + cam_w // 2, cam_y + cam_h // 2))
             self.screen.blit(txt, rect)
         else:
-            # GO!
             self.challenge_state = "active"
             self.challenge_start_time = time.time()
-            self.last_sign_time = time.time() # Reset cooldown
+            self.last_sign_time = time.time()
             self.play_sound("complete")
 
-    def _render_challenge_results(self, cam_x, cam_y):
+    def _render_challenge_results(self, cam_x, cam_y, cam_w, cam_h):
         """Draw results overlay with Rank and stats."""
-        overlay = pygame.Surface((640, 480), pygame.SRCALPHA)
-        overlay.fill((10, 10, 15, 200)) # Extra dark blue-ish
+        overlay = pygame.Surface((cam_w, cam_h), pygame.SRCALPHA)
+        overlay.fill((10, 10, 15, 200)) 
         self.screen.blit(overlay, (cam_x, cam_y))
         
         # Card style
-        card = pygame.Rect(cam_x + 100, cam_y + 50, 440, 380)
+        card_w, card_h = min(cam_w - 40, 480), min(cam_h - 40, 400)
+        card = pygame.Rect(cam_x + (cam_w - card_w) // 2, cam_y + (cam_h - card_h) // 2, card_w, card_h)
         pygame.draw.rect(self.screen, (25, 25, 30), card, border_radius=20)
         pygame.draw.rect(self.screen, COLORS["accent"], card, 2, border_radius=20)
         
@@ -3131,6 +3172,21 @@ class JutsuAcademy:
         # Flip for mirror
         frame = cv2.flip(frame, 1)
         
+        # Camera position on screen (Centered & Scaled)
+        # We want to fill the screen as much as possible while maintaining aspect ratio
+        frame_h, frame_w = frame.shape[:2]
+        
+        # Calculate scaling to fit screen height (Careful with 768p constraint)
+        # 768 - 45(HUD) - 50(Title) - 135(Icons) - 60(Margins) = ~478
+        target_h = SCREEN_HEIGHT - 300 
+        scale = target_h / frame_h
+        
+        new_w = int(frame_w * scale)
+        new_h = int(frame_h * scale)
+        
+        cam_x = (SCREEN_WIDTH - new_w) // 2
+        cam_y = 100 # Moved up slightly to save space
+        
         # 1. Challenge Mode Visibility
         should_detect = True
         if self.game_mode == "challenge":
@@ -3148,8 +3204,30 @@ class JutsuAcademy:
         detected = None
         if should_detect:
             if not self.jutsu_active:
-                # Sequence Phase: Use YOLO for hand sign recognition (bounding boxes)
-                frame, detected = self.detect_and_process(frame)
+                # Sequence Phase: Recognition
+                if self.settings.get("use_mediapipe_signs", False):
+                    # Use MediaPipe Tasks API for sign recognition
+                    self.detect_hands(frame) # This populates self.last_mp_result if successful
+                    
+                    if hasattr(self, 'last_mp_result') and self.last_mp_result.hand_landmarks:
+                        features = self.recorder.process_tasks_landmarks(
+                            self.last_mp_result.hand_landmarks, 
+                            self.last_mp_result.handedness
+                        )
+                        detected = self.recorder.predict(features).lower()
+                        
+                        # --- 2-Hand Restriction logic ---
+                        if self.settings.get("restricted_signs", False):
+                            num_hands = len(self.last_mp_result.hand_landmarks)
+                            if num_hands < 2:
+                                detected = "idle"
+                        
+                        # (Removed moving OpenCV text to use static Pygame text below)
+                    else:
+                        detected = "Idle"
+                else:
+                    # Legacy Phase: Use YOLO for hand sign recognition (bounding boxes)
+                    frame, detected = self.detect_and_process(frame)
             else:
                 # Effect Phase: switch to MediaPipe for precise tracking
                 self.detect_hands(frame)
@@ -3181,19 +3259,19 @@ class JutsuAcademy:
                             
                             is_lv_up = self.progression.add_xp(total_xp)
                             
-                            # Add XP popup
+                            # Add XP popup (Centered on Camera feed)
                             self.xp_popups.append({
                                 "text": f"+{total_xp} XP", 
-                                "x": cam_x + 320, 
-                                "y": cam_y + 100, 
+                                "x": cam_x + new_w // 2, 
+                                "y": cam_y + new_h // 2, 
                                 "timer": 2.0, 
                                 "color": COLORS["accent"]
                             })
                             if is_lv_up:
                                 self.xp_popups.append({
                                     "text": f"RANK UP: {self.progression.rank}!", 
-                                    "x": cam_x + 320, 
-                                    "y": cam_y + 150, 
+                                    "x": cam_x + new_w // 2, 
+                                    "y": cam_y + new_h // 2 + 40, 
                                     "timer": 3.0, 
                                     "color": COLORS["success"]
                                 })
@@ -3224,29 +3302,7 @@ class JutsuAcademy:
                                 self.current_video = jutsu_name
                                 print(f"[+] Playing video: {video_path}")
         
-        # Camera position on screen (Centered & Scaled)
-        # We want to fill the screen as much as possible while maintaining aspect ratio
-        frame_h, frame_w = frame.shape[:2]
-        
-        # Calculate Aspect Fill Scale
-        scale_w = SCREEN_WIDTH / frame_w
-        scale_h = SCREEN_HEIGHT / frame_h
-        scale = max(scale_w, scale_h) # Select larger scale to fill
-        
-        # Or, if we want to "Fit" inside a slightly smaller box to see UI:
-        # Let's stick to the request "scale image resolution properly".
-        # A good approach for this app is "Aspect Fit" within a large central area, 
-        # but let's make it cover most of the screen.
-        
-        # Let's target a max height of SCREEN_HEIGHT - 150 (space for HUD)
-        target_h = SCREEN_HEIGHT - 140
-        scale = target_h / frame_h
-        
-        new_w = int(frame_w * scale)
-        new_h = int(frame_h * scale)
-        
-        cam_x = (SCREEN_WIDTH - new_w) // 2
-        cam_y = 110 # Below XP bar
+        # (Camera dimensions already calculated at the top)
         
         # Update particles with correct screen position based on new scale
         if self.fire_particles.emitting and self.mouth_pos:
@@ -3321,14 +3377,37 @@ class JutsuAcademy:
             self.screen.blit(t_bg, (cam_x + 15, cam_y + 15))
             self.screen.blit(t_txt, (cam_x + 27, cam_y + 21))
 
-        # --- Challenge Overlays (Top level) ---
-        if self.game_mode == "challenge":
+        # --- Static Sign Prediction Label (Fixed Top-Right) ---
+        if detected and detected != "Idle":
+            pred_txt = self.fonts["body"].render(f"SIGN: {detected.upper()}", True, (255, 255, 255))
+            tw, th = pred_txt.get_size()
+            
+            # Label Panel (Top Right of cam)
+            lx, ly = cam_x + new_w - tw - 30, cam_y + 15
+            lp_rect = pygame.Rect(lx - 12, ly - 6, tw + 24, th + 12)
+            
+            # Glass effect for label
+            lp_surf = pygame.Surface((lp_rect.width, lp_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(lp_surf, (20, 20, 30, 200), (0, 0, lp_rect.width, lp_rect.height), border_radius=8)
+            pygame.draw.rect(lp_surf, COLORS["success"], (0, 0, lp_rect.width, lp_rect.height), 1, border_radius=8)
+            self.screen.blit(lp_surf, lp_rect)
+            self.screen.blit(pred_txt, (lx, ly))
+
+        elif self.state == GameState.WELCOME_MODAL:
+            self.render_welcome_modal(dt)
+        elif self.state == GameState.QUIT_CONFIRM:
+            self.render_quit_confirm()
+        elif self.state == GameState.LOGOUT_CONFIRM:
+            self.render_logout_confirm()
+        
+        # --- Challenge Overlays (Responsive) ---
+        if self.game_mode == "challenge" and not is_locked:
             if self.challenge_state == "waiting":
-                self._render_challenge_lobby(cam_x, cam_y)
+                self._render_challenge_lobby(cam_x, cam_y, new_w, new_h)
             elif self.challenge_state == "countdown":
-                self._render_challenge_countdown(cam_x, cam_y)
+                self._render_challenge_countdown(cam_x, cam_y, new_w, new_h)
             elif self.challenge_state == "results":
-                self._render_challenge_results(cam_x, cam_y)
+                self._render_challenge_results(cam_x, cam_y, new_w, new_h)
         
         # Sound Scheduler
         if hasattr(self, "pending_sound") and self.pending_sound:
@@ -3383,37 +3462,37 @@ class JutsuAcademy:
                 # Video ended, loop it
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
-        # Progression HUD (NEW)
-        # Draw Rank and XP Level Bar in top margin
-        p_x, p_y = cam_x, cam_y - 85
-        rank_txt = f"{self.progression.rank}  •  Lv.{self.progression.level}"
-        rank_surf = self.fonts["body_sm"].render(rank_txt, True, (255, 215, 0)) # Gold
-        # Glow for rank text
-        rank_glow = self.fonts["body_sm"].render(rank_txt, True, (218, 165, 32))
-        self.screen.blit(rank_glow, (p_x + 1, p_y + 1))
-        self.screen.blit(rank_surf, (p_x, p_y))
-        
-        # XP Bar
-        bar_w, bar_h = 240, 10
-        bar_y = cam_y - 62
-        pygame.draw.rect(self.screen, (30, 30, 40), (p_x, bar_y, bar_w, bar_h), border_radius=5)
-        pygame.draw.rect(self.screen, (50, 50, 70), (p_x, bar_y, bar_w, bar_h), 1, border_radius=5)
+        # Progression HUD (MMO Style Top Bar)
+        hud_h = 45
+        hud_bg = pygame.Surface((SCREEN_WIDTH, hud_h), pygame.SRCALPHA)
+        hud_bg.fill((20, 20, 25, 230))
+        self.screen.blit(hud_bg, (0, 0))
+        pygame.draw.line(self.screen, COLORS["border"], (0, hud_h), (SCREEN_WIDTH, hud_h), 1)
+
+        # Level Badge
+        badge_txt = f"{self.progression.rank} • LV.{self.progression.level}"
+        badge_surf = self.fonts["body"].render(badge_txt, True, (255, 255, 255))
+        self.screen.blit(badge_surf, (20, (hud_h - badge_surf.get_height()) // 2))
+
+        # XP Bar (Centered Top)
+        bar_w = 400
+        bar_x = (SCREEN_WIDTH - bar_w) // 2
+        bar_y = (hud_h - 12) // 2 + 2
         
         prev_lv_xp = self.progression.get_xp_for_level(self.progression.level)
         next_lv_xp = self.progression.get_xp_for_level(self.progression.level + 1)
         progress = (self.progression.xp - prev_lv_xp) / max(1, (next_lv_xp - prev_lv_xp))
         progress = max(0, min(1, progress))
-        
+
+        pygame.draw.rect(self.screen, (40, 40, 50), (bar_x, bar_y, bar_w, 10), border_radius=5)
         if progress > 0:
-            pygame.draw.rect(self.screen, COLORS["accent"], (p_x + 2, bar_y + 2, (bar_w - 4) * progress, bar_h - 4), border_radius=3)
-            # Shine effect on XP bar
-            shine_rect = pygame.Rect(p_x + 2, bar_y + 2, (bar_w - 4) * progress, (bar_h - 4) // 2)
-            pygame.draw.rect(self.screen, (255, 255, 255, 40), shine_rect, border_radius=3)
-            
-        # Draw XP text
+            pygame.draw.rect(self.screen, COLORS["accent"], (bar_x, bar_y, bar_w * progress, 10), border_radius=5)
+            # Gloss
+            pygame.draw.rect(self.screen, (255, 255, 255, 30), (bar_x, bar_y, bar_w * progress, 5), border_radius=5)
+
         xp_txt = f"{self.progression.xp} / {next_lv_xp} XP"
         xp_surf = self.fonts["tiny"].render(xp_txt, True, COLORS["text_dim"])
-        self.screen.blit(xp_surf, (p_x + bar_w + 10, bar_y - 3))
+        self.screen.blit(xp_surf, (bar_x + bar_w + 10, bar_y - 3))
 
         # XP Popups
         for popup in self.xp_popups[:]:
@@ -3435,9 +3514,9 @@ class JutsuAcademy:
         # If locked, don't show sequence icons but a lock message
         if is_locked:
             lock_msg = self.fonts["body"].render(f"REQUIRED RANK: LV.{min_lv}", True, COLORS["error"])
-            self.screen.blit(lock_msg, lock_msg.get_rect(center=(cam_x + 320, cam_y + 510)))
+            self.screen.blit(lock_msg, lock_msg.get_rect(center=(cam_x + new_w // 2, cam_y + new_h + 40)))
         else:
-            self._render_icon_bar(cam_x, cam_y + 490)
+            self._render_icon_bar(cam_x, cam_y + new_h + 10, new_w)
         
         # Move Title (Styled Capsule)
         display_name = current_jutsu_name.upper() if not is_locked else "??????"
@@ -3447,7 +3526,7 @@ class JutsuAcademy:
         tw, th = name_surf.get_size()
         
         padding_x, padding_y = 35, 10
-        title_rect = pygame.Rect(cam_x + (640 - tw - padding_x*2)//2, cam_y - 48, tw + padding_x*2, th + padding_y*2)
+        title_rect = pygame.Rect(cam_x + (new_w - tw - padding_x*2)//2, cam_y - 48, tw + padding_x*2, th + padding_y*2)
         
         if not is_locked:
             # Subtle Glow
@@ -3474,7 +3553,7 @@ class JutsuAcademy:
         
         fps_txt = f"FPS: {self.fps}"
         fps_surf = self.fonts["tiny"].render(fps_txt, True, COLORS["success"])
-        self.screen.blit(fps_surf, (cam_x + 640 - fps_surf.get_width() - 5, cam_y - 18))
+        self.screen.blit(fps_surf, (cam_x + new_w - fps_surf.get_width() - 5, cam_y - 18))
         
         # Navigation arrows - Only show if not active and (if challenge) in waiting room
         show_nav = not self.jutsu_active
@@ -3483,42 +3562,40 @@ class JutsuAcademy:
             
         if show_nav:
             mouse_pos = pygame.mouse.get_pos()
-            arrow_y = cam_y + 200
+            arrow_y = cam_y + new_h // 2 - 30
             
-            # Symmetrical Positioning Math:
-            # We want a 15px visual gap from the feed to the icon edge.
-            # Icon is 50px wide. Hitbox is 20px wide.
-            # Left: Icon starts at cam_x - 15 - 50 = cam_x - 65.
-            # Right: Icon starts at cam_x + 640 + 15 = cam_x + 655.
+            # MODERN ARROWS: Semi-transparent circular buttons
+            # Left Button
+            l_btn_rect = pygame.Rect(cam_x - 70, arrow_y, 50, 60)
+            self.left_arrow_rect = l_btn_rect
+            l_hover = l_btn_rect.collidepoint(mouse_pos)
             
-            # Hitbox centered on icon: Icon center +/- 10.
-            # Left Icon Center: (cam_x - 65) + 25 = cam_x - 40. -> Rect: [cam_x-50, 20]
-            # Right Icon Center: (cam_x + 655) + 25 = cam_x + 680. -> Rect: [cam_x+670, 20]
-            self.left_arrow_rect = pygame.Rect(cam_x - 50, arrow_y, 20, 60)
-            self.right_arrow_rect = pygame.Rect(cam_x + 670, arrow_y, 20, 60)
+            l_alpha = 200 if l_hover else 120
+            l_surf = pygame.Surface((50, 60), pygame.SRCALPHA)
+            pygame.draw.rect(l_surf, (20, 20, 25, l_alpha), (0, 0, 50, 60), border_radius=10)
+            pygame.draw.rect(l_surf, (*COLORS["accent"], l_alpha), (0, 0, 50, 60), 2, border_radius=10)
             
-            # Left Arrow Render
-            l_hover = self.left_arrow_rect.collidepoint(mouse_pos)
-            l_color = COLORS["accent_glow"] if l_hover else COLORS["accent"]
+            # Triangle icon
+            p1, p2, p3 = (35, 15), (15, 30), (35, 45)
+            pygame.draw.polygon(l_surf, (255, 255, 255, l_alpha), [p1, p2, p3])
+            self.screen.blit(l_surf, l_btn_rect)
             if l_hover: pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
-            
-            if self.arrow_icons["left"]:
-                # Blit icon centered on the hitbox Y, with symmetrical X offset
-                self.screen.blit(self.arrow_icons["left"], (cam_x - 65, arrow_y + 5))
-            else:
-                left_surf = self.fonts["title_lg"].render("◀", True, l_color)
-                self.screen.blit(left_surf, (self.left_arrow_rect.centerx - left_surf.get_width()//2, self.left_arrow_rect.centery - left_surf.get_height()//2))
 
-            # Right Arrow Render
-            r_hover = self.right_arrow_rect.collidepoint(mouse_pos)
-            r_color = COLORS["accent_glow"] if r_hover else COLORS["accent"]
+            # Right Button
+            r_btn_rect = pygame.Rect(cam_x + new_w + 20, arrow_y, 50, 60)
+            self.right_arrow_rect = r_btn_rect
+            r_hover = r_btn_rect.collidepoint(mouse_pos)
+            
+            r_alpha = 200 if r_hover else 120
+            r_surf = pygame.Surface((50, 60), pygame.SRCALPHA)
+            pygame.draw.rect(r_surf, (20, 20, 25, r_alpha), (0, 0, 50, 60), border_radius=10)
+            pygame.draw.rect(r_surf, (*COLORS["accent"], r_alpha), (0, 0, 50, 60), 2, border_radius=10)
+            
+            # Triangle icon
+            p1, p2, p3 = (15, 15), (35, 30), (15, 45)
+            pygame.draw.polygon(r_surf, (255, 255, 255, r_alpha), [p1, p2, p3])
+            self.screen.blit(r_surf, r_btn_rect)
             if r_hover: pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
-                
-            if self.arrow_icons["right"]:
-                self.screen.blit(self.arrow_icons["right"], (cam_x + 655, arrow_y + 5))
-            else:
-                right_surf = self.fonts["title_lg"].render("▶", True, r_color)
-                self.screen.blit(right_surf, (self.right_arrow_rect.centerx - right_surf.get_width()//2, self.right_arrow_rect.centery - right_surf.get_height()//2))
             
 
         else:
@@ -3529,12 +3606,12 @@ class JutsuAcademy:
         hint = self.fonts["body_sm"].render("Press ESC to exit", True, COLORS["text_muted"])
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - 60, SCREEN_HEIGHT - 30))
     
-    def _render_icon_bar(self, x, y):
+    def _render_icon_bar(self, x, y, bar_w):
         """Render the jutsu sequence icon bar with dynamic scaling."""
         n = len(self.sequence)
         max_icon_size = 80
         gap = 12
-        max_total_w = 610 # padding within the 640 width
+        max_total_w = bar_w - 30 # padding within frame
         
         # Calculate optimal icon size
         icon_size = max_icon_size
@@ -3542,27 +3619,30 @@ class JutsuAcademy:
         
         if total_w > max_total_w:
             icon_size = (max_total_w - (n - 1) * gap) // n
-            icon_size = max(40, icon_size) # Don't go too tiny
+            icon_size = max(40, icon_size) 
             total_w = n * icon_size + (n - 1) * gap
             
-        start_x = x + (640 - total_w) // 2
+        start_x = x + (bar_w - total_w) // 2
         
-        # Background panel
-        panel_rect = pygame.Rect(x, y - 10, 640, 120)
-        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=12)
-        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=12)
+        # Background panel (Responsive)
+        panel_h = 135
+        panel_rect = pygame.Rect(x, y, bar_w, panel_h)
+        # Deep translucent background
+        panel_surf = pygame.Surface((bar_w, panel_h), pygame.SRCALPHA)
+        pygame.draw.rect(panel_surf, (20, 20, 30, 240), (0, 0, bar_w, panel_h), border_radius=15)
+        self.screen.blit(panel_surf, (x, y))
+        pygame.draw.rect(self.screen, COLORS["border"], (x, y, bar_w, panel_h), 2, border_radius=15)
         
-        # Status text (Scale font if icons are tiny)
-        font_status = self.fonts["body"] if icon_size > 50 else self.fonts["body_sm"]
-        
+        # Status text
+        icon_y_start = y + 45
         if self.jutsu_active:
             display = self.jutsu_list[self.jutsu_names[self.current_jutsu_idx]].get("display_text", "")
             status = self.fonts["title_sm"].render(display.upper(), True, COLORS["accent_glow"])
         else:
             target = self.sequence[self.current_step] if self.current_step < len(self.sequence) else ""
-            status = font_status.render(f"NEXT SIGN: {target.upper()}", True, COLORS["text"])
+            status = self.fonts["body"].render(f"NEXT SIGN: {target.upper()}", True, (255, 255, 255))
         
-        status_rect = status.get_rect(center=(x + 320, y))
+        status_rect = status.get_rect(center=(x + bar_w // 2, y + 22))
         self.screen.blit(status, status_rect)
         
         # Icons
@@ -3570,7 +3650,7 @@ class JutsuAcademy:
             ix = start_x + i * (icon_size + gap)
             
             # Center icons vertically if they are smaller than max
-            iy = y + 15 + (max_icon_size - icon_size) // 2
+            iy = icon_y_start + (80 - icon_size) // 2
             
             # Border
             if i < self.current_step:
@@ -3718,6 +3798,14 @@ class JutsuAcademy:
                     self.state = GameState.MENU
                     
         elif self.state == GameState.WELCOME_MODAL:
+            # Handle key fallback
+            if any(event.type == pygame.KEYDOWN and event.key in [pygame.K_SPACE, pygame.K_RETURN] for event in events):
+                 self.play_sound("click")
+                 self.state = GameState.MENU
+                 if self.pending_action == "practice":
+                     self.state = GameState.PRACTICE_SELECT
+                     self.pending_action = None
+            
             if mouse_click:
                 if hasattr(self, 'welcome_ok_rect') and self.welcome_ok_rect.collidepoint(mouse_pos):
                     self.play_sound("click")
@@ -3846,6 +3934,8 @@ class JutsuAcademy:
                         self.settings["sfx_vol"] = self.settings_sliders["sfx"].value
                         self.settings["camera_idx"] = self.camera_dropdown.selected_idx
                         self.settings["debug_hands"] = self.settings_checkboxes["debug_hands"].checked
+                        self.settings["use_mediapipe_signs"] = self.settings_checkboxes["use_mp"].checked
+                        self.settings["restricted_signs"] = self.settings_checkboxes["restricted"].checked
                         
                         if not self.is_muted:
                             pygame.mixer.music.set_volume(self.settings["music_vol"])
@@ -3998,7 +4088,7 @@ class JutsuAcademy:
                     self.screen.blit(self.background, (0, 0))
                 else:
                     self.screen.fill(COLORS["bg_dark"])
-                self.render_welcome_modal()
+                self.render_welcome_modal(dt)
             elif self.state == GameState.LOGOUT_CONFIRM:
                 # Render underlying state first
                 self.render_menu()

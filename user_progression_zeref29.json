@@ -1,10 +1,10 @@
 {
-    "xp": 80,
-    "level": 0,
-    "rank": "Academy Student",
+    "xp": 4000,
+    "level": 6,
+    "rank": "Genin Candidate",
     "stats": {
         "total_signs": 0,
-        "total_jutsus": 1,
+        "total_jutsus": 47,
         "fastest_combo": 99.0
     }
 }
