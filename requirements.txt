@@ -11,7 +11,9 @@ mediapipe>=0.10.9
 cvzone>=1.5.0
 websockets>=12.0  # For Godot backend server
 
-# Additional dependencies (usually installed with ultralytics)
+# Cloud & Config
+python-dotenv>=1.0.0
+supabase>=2.0.0
 numpy>=1.23.0
 pillow>=9.0.0
 pyyaml>=6.0

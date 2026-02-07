@@ -9,25 +9,48 @@ import threading
 # Load env variables simple parser
 def get_env():
     env = {}
-    env_path = Path(__file__).parent.parent.parent / "web" / ".env.local"
-    try:
-        with open(env_path, "r") as f:
-            for line in f:
-                if "=" in line:
-                    k, v = line.strip().split("=", 1)
-                    env[k] = v.strip('"')
-    except:
-        pass
+    
+    # 1. Try Loading from os.environ first (if loaded by dotenv elsewhere)
+    for k, v in os.environ.items():
+        env[k] = v
+        
+    # 2. Check for .env files in common locations
+    root_dir = Path(__file__).parent.parent.parent
+    possible_paths = [
+        root_dir / ".env",
+        root_dir / "web" / ".env.local",
+        root_dir / ".env.local"
+    ]
+    
+    for env_path in possible_paths:
+        if env_path.exists():
+            try:
+                with open(env_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"): continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            # Simple cleanup
+                            k = k.strip() 
+                            v = v.strip().strip('"').strip("'")
+                            if k not in env: # Don't overwrite existing env vars
+                                env[k] = v
+            except:
+                pass
+                
     return env
 
 class NetworkManager:
     def __init__(self):
         env = get_env()
-        self.url = env.get("NEXT_PUBLIC_SUPABASE_URL", "")
-        self.key = env.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
+        
+        # Try different key variants
+        self.url = env.get("SUPABASE_URL") or env.get("NEXT_PUBLIC_SUPABASE_URL", "")
+        self.key = env.get("SUPABASE_KEY") or env.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
         
         if not self.url or not self.key:
-            print("[!] Supabase credentials missing in .env.local")
+            print("[!] Supabase credentials missing (checked .env, web/.env.local)")
             self.client = None
         else:
             self.client: Client = create_client(self.url, self.key)
@@ -223,9 +246,10 @@ class NetworkManager:
             response = self.client.table('profiles').select('*').eq('username', username).execute()
             if response.data:
                 return response.data[0]
+            return {} # Return empty dict for "User Not Found"
         except Exception as e:
             print(f"[!] Profile fetch failed: {e}")
-        return None
+        return None # Return None for "Error"
 
     def upsert_profile(self, data):
         """Update or Insert player progression"""

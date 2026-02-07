@@ -478,6 +478,7 @@ class ProgressionManager:
             "total_jutsus": 0,
             "fastest_combo": 99.0
         }
+        self.synced = False # Track if we have finished initial sync
         
         # Level requirements and Rank names
         self.RANKS = [
@@ -500,12 +501,20 @@ class ProgressionManager:
             threading.Thread(target=self.sync_from_cloud, daemon=True).start()
         else:
             self.load() # Guest mode can still use local persistence
+            self.synced = True
 
     def sync_from_cloud(self):
         """Fetch latest XP and Level from Supabase."""
         if not self.network_manager: return
         profile = self.network_manager.get_profile(self.username)
-        if profile:
+        
+        # Handle network/fetch errors gracefully
+        if profile is None:
+            print(f"[!] Cloud Sync Error: Could not fetch profile for {self.username}. Skipping sync to avoid overwrite.")
+            self.synced = True # Allow UI to show (even if 0) to avoid infinite loading
+            return
+
+        if profile: # User exists (non-empty dict)
             # Only update if cloud has MORE XP than local (prevents overwriting newer local progress)
             if profile.get("xp", 0) > self.xp:
                 self.xp = profile["xp"]
@@ -515,7 +524,7 @@ class ProgressionManager:
                 # We do NOT save() to a local file for authenticated users 
                 # to ensure there's no cheatable local JSON.
                 print(f"[*] Cloud Sync Success: Retrieved Lv.{self.level} for {self.username}")
-        else:
+        else: # User not found (empty dict)
             # No cloud profile found -> This is a new user (or offline progress to sync up)
             print(f"[*] New cloud user: Creating profile for {self.username}")
             # We call the internal DB function directly to avoid spawning another thread from within this thread
@@ -528,6 +537,8 @@ class ProgressionManager:
                 "total_jutsus": self.stats["total_jutsus"]
             }
             self.network_manager.upsert_profile(data)
+        
+        self.synced = True # Sync complete
 
     def sync_to_cloud(self):
         """Push current progression to Supabase."""
@@ -1871,32 +1882,45 @@ class JutsuAcademy:
         name_render = self.fonts["body"].render(name_str, True, COLORS["text"])
         self.screen.blit(name_render, (self.profile_rect.x + 70, self.profile_rect.y + 12))
         
-        rank_lv_str = f"{self.progression.rank} • LV.{self.progression.level}"
-        rank_lv_render = self.fonts["tiny"].render(rank_lv_str.upper(), True, COLORS["accent_glow"])
-        self.screen.blit(rank_lv_render, (self.profile_rect.x + 70, self.profile_rect.y + 36))
+        # Check cloud sync status
+        if getattr(self.progression, 'synced', True):
+            rank_lv_str = f"{self.progression.rank} • LV.{self.progression.level}"
+            rank_lv_render = self.fonts["tiny"].render(rank_lv_str.upper(), True, COLORS["accent_glow"])
+            self.screen.blit(rank_lv_render, (self.profile_rect.x + 70, self.profile_rect.y + 36))
 
-        # XP Progress Bar
-        bar_w, bar_h = 210, 8
-        bar_x, bar_y = self.profile_rect.x + 70, self.profile_rect.y + 60
-        
-        prev_lv_xp = self.progression.get_xp_for_level(self.progression.level)
-        next_lv_xp = self.progression.get_xp_for_level(self.progression.level + 1)
-        xp_needed = max(1, next_lv_xp - prev_lv_xp)
-        xp_current = self.progression.xp - prev_lv_xp
-        progress = max(0, min(1, xp_current / xp_needed))
+            # XP Progress Bar
+            bar_w, bar_h = 210, 8
+            bar_x, bar_y = self.profile_rect.x + 70, self.profile_rect.y + 60
+            
+            prev_lv_xp = self.progression.get_xp_for_level(self.progression.level)
+            next_lv_xp = self.progression.get_xp_for_level(self.progression.level + 1)
+            xp_needed = max(1, next_lv_xp - prev_lv_xp)
+            xp_current = self.progression.xp - prev_lv_xp
+            progress = max(0, min(1, xp_current / xp_needed))
 
-        # Track
-        pygame.draw.rect(self.screen, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
-        if progress > 0:
-            # Filled part
-            pygame.draw.rect(self.screen, COLORS["accent"], (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=4)
-            # Gloss/Shine
-            pygame.draw.rect(self.screen, (255, 255, 255, 40), (bar_x, bar_y, int(bar_w * progress), bar_h // 2), border_radius=4)
+            # Track
+            pygame.draw.rect(self.screen, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
+            if progress > 0:
+                # Filled part
+                pygame.draw.rect(self.screen, COLORS["accent"], (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=4)
+                # Gloss/Shine
+                pygame.draw.rect(self.screen, (255, 255, 255, 40), (bar_x, bar_y, int(bar_w * progress), bar_h // 2), border_radius=4)
+        else:
+            # Show Syncing Animation
+            dots = "." * (int(time.time() * 2) % 4)
+            sync_render = self.fonts["tiny"].render(f"SYNCING PROFILE{dots}", True, COLORS["text_dim"])
+            self.screen.blit(sync_render, (self.profile_rect.x + 70, self.profile_rect.y + 36))
+            
+            # Empty Track Placeholder
+            bar_w, bar_h = 210, 8
+            bar_x, bar_y = self.profile_rect.x + 70, self.profile_rect.y + 60
+            pygame.draw.rect(self.screen, (30, 30, 35), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
 
         # XP Label
-        xp_label_str = f"{self.progression.xp} / {next_lv_xp} XP"
-        xp_render = self.fonts["tiny"].render(xp_label_str, True, COLORS["text_dim"])
-        self.screen.blit(xp_render, (bar_x, bar_y + 12))
+        if getattr(self.progression, 'synced', True):
+            xp_label_str = f"{self.progression.xp} / {next_lv_xp} XP"
+            xp_render = self.fonts["tiny"].render(xp_label_str, True, COLORS["text_dim"])
+            self.screen.blit(xp_render, (bar_x, bar_y + 12))
 
         # ─── New: Announcement Overlay Logic ───
         # Auto-show logic
