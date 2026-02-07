@@ -902,166 +902,200 @@ class RenderingMixin:
                     self.screen.blit(desc, desc_rect)
 
     def render_about(self):
-        """Render about/specs page."""
-        self.screen.fill(COLORS["bg_dark"])
-        
-        # Title
+        """Render upgraded About page."""
+        if self.bg_image:
+            self.screen.blit(self.bg_image, (0, 0))
+        else:
+            self.screen.fill(COLORS["bg_dark"])
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+
         title = self.fonts["title_md"].render("ABOUT JUTSU ACADEMY", True, COLORS["accent"])
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 60))
-        self.screen.blit(title, title_rect)
-        
-        # Panel Dimensions
-        panel_w, panel_h = 600, 500
-        panel_x = SCREEN_WIDTH // 2 - 300
-        panel_y = 100
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 58)))
+
+        subtitle = self.fonts["body_sm"].render(
+            "Project details, controls, privacy, and roadmap",
+            True,
+            COLORS["text_dim"],
+        )
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 90)))
+
+        panel_margin_x = 90
+        panel_w = SCREEN_WIDTH - panel_margin_x * 2
+        panel_h = SCREEN_HEIGHT - 240
+        panel_x = panel_margin_x
+        panel_y = 120
         panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
-        
-        # Draw Panel Background
+
         pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=16)
-        
-        # Create Content Surface
-        content_h = 1500 # Increased height for legal text
+        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=16)
+
+        content_h = max(1800, panel_h + 500)
         content_surf = pygame.Surface((panel_w, content_h), pygame.SRCALPHA)
-        
-        c_y = 20 # Start Y on content surface
-        margin_x = 40
-        
-        # --- Content ---
-        
-        # Minimum Reqs
-        header = self.fonts["title_sm"].render("MINIMUM REQUIREMENTS", True, COLORS["success"])
-        content_surf.blit(header, (margin_x, c_y))
-        c_y += 40
-        
-        min_reqs = [
-            "- GPU: NVIDIA GTX 1050 or equivalent",
-            "- CPU: Intel Core i5 8th Gen / Ryzen 5 2600",
-            "- RAM: 8GB",
-            "- Camera: 720p 30fps Webcam",
-        ]
-        
-        for req in min_reqs:
-            text = self.fonts["body_sm"].render(req, True, COLORS["text"])
-            content_surf.blit(text, (margin_x, c_y))
-            c_y += 30
-        
-        c_y += 20
-        
-        # Recommended Reqs
-        header = self.fonts["title_sm"].render("RECOMMENDED", True, COLORS["accent"])
-        content_surf.blit(header, (margin_x, c_y))
-        c_y += 40
-        
-        rec_reqs = [
-            "- GPU: RTX 2060 or better (for smooth tracking)",
-            "- CPU: i7 10th Gen / Ryzen 7 3700X",
-            "- RAM: 16GB",
-            "- Camera: 1080p 60fps Webcam",
-        ]
-        
-        for req in rec_reqs:
-            text = self.fonts["body_sm"].render(req, True, COLORS["text"])
-            content_surf.blit(text, (margin_x, c_y))
-            c_y += 30
-            
-        c_y += 30
-        
-        # Divider Line
-        pygame.draw.line(content_surf, COLORS["border"], (margin_x, c_y), (panel_w - margin_x, c_y), 2)
-        c_y += 30
-        
-        # Developer Info
-        dev_info = self.fonts["title_sm"].render("DEVELOPER", True, COLORS["text"])
-        content_surf.blit(dev_info, (margin_x, c_y))
-        c_y += 40
-        
-        dev_details = [
-            "Created by: James Uzumaki",
-            "Built with: Python, YOLO, MediaPipe, Pygame",
-            f"Version: {APP_VERSION} - Pygame Edition",
-        ]
-        
-        for detail in dev_details:
-            text = self.fonts["body_sm"].render(detail, True, COLORS["text_dim"])
-            content_surf.blit(text, (margin_x, c_y))
-            c_y += 28
+        c_y = 20
+        margin_x = 28
+        section_w = panel_w - (margin_x * 2) - 10
 
-        c_y += 40
+        def wrap_text(text, font, max_width):
+            words = text.split()
+            if not words:
+                return [""]
+            lines = []
+            current = words[0]
+            for word in words[1:]:
+                candidate = f"{current} {word}"
+                if font.size(candidate)[0] <= max_width:
+                    current = candidate
+                else:
+                    lines.append(current)
+                    current = word
+            lines.append(current)
+            return lines
 
-        # Legal Disclaimer
-        disclaimer_header = self.fonts["title_sm"].render("LEGAL DISCLAIMER", True, COLORS["error"])
-        content_surf.blit(disclaimer_header, (margin_x, c_y))
-        c_y += 40
-        
-        disclaimer_lines = [
-            "This is a non-profit fan-made project.",
-            "Naruto and all related characters, names, and",
-            "indices are trademarks of Masashi Kishimoto,",
-            "Shueisha, TV Tokyo, and Viz Media.",
-            "This project is not affiliated with or endorsed",
-            "by the official rights holders.",
-            "Intended for educational & portfolio purposes only.",
-        ]
-        
-        for line in disclaimer_lines:
-            text = self.fonts["body_sm"].render(line, True, COLORS["text"])
-            content_surf.blit(text, (margin_x, c_y))
-            c_y += 30
+        def draw_section(title_text, lines, title_color=COLORS["accent"], body_color=COLORS["text_dim"]):
+            nonlocal c_y
+            title_font = self.fonts["title_sm"]
+            body_font = self.fonts["body_sm"]
+            line_h = 28
 
-        c_y += 30
+            wrapped_lines = []
+            for line in lines:
+                if line == "":
+                    wrapped_lines.append("")
+                    continue
+                wrapped_lines.extend(wrap_text(line, body_font, section_w - 24))
 
-        # Privacy & Terms
-        pt_header = self.fonts["title_sm"].render("TERMS & PRIVACY", True, COLORS["text"])
-        content_surf.blit(pt_header, (margin_x, c_y))
-        c_y += 40
-        
-        pt_lines = [
-            "Privacy Policy:",
-            "Camera data is processed LOCALLY on your device.",
-            "No images or video are sent to any server.",
-            "We do not collect personal data. Only a local",
-            "session file is stored for Discord login.",
-            "",
-            "Terms of Service:",
-            "By using this software, you agree that you",
-            "understand this is a fan project provided 'as-is'.",
-        ]
-        
-        for line in pt_lines:
-            text = self.fonts["body_sm"].render(line, True, COLORS["text_dim"])
-            content_surf.blit(text, (margin_x, c_y))
-            c_y += 30
+            section_h = 20 + title_font.get_height() + 12 + len(wrapped_lines) * line_h + 16
+            card_rect = pygame.Rect(margin_x, c_y, section_w, section_h)
+            pygame.draw.rect(content_surf, (24, 24, 34, 230), card_rect, border_radius=12)
+            pygame.draw.rect(content_surf, COLORS["border"], card_rect, 1, border_radius=12)
 
-        # --- Blit visible portion ---
-        
-        # Limit scroll
-        max_scroll = max(0, c_y - panel_h + 20)
+            t_surf = title_font.render(title_text, True, title_color)
+            content_surf.blit(t_surf, (card_rect.x + 14, card_rect.y + 12))
+
+            line_y = card_rect.y + 12 + title_font.get_height() + 8
+            for line in wrapped_lines:
+                if line == "":
+                    line_y += line_h // 2
+                    continue
+                b_surf = body_font.render(line, True, body_color)
+                content_surf.blit(b_surf, (card_rect.x + 14, line_y))
+                line_y += line_h
+
+            c_y = card_rect.bottom + 14
+
+        draw_section(
+            "OVERVIEW",
+            [
+                "Jutsu Academy is a Naruto-inspired hand-sign training game where players perform sign sequences in front of a camera to execute jutsu.",
+                "The game focuses on timing, recognition accuracy, progression unlocks, and fast iteration between free practice and challenge runs.",
+            ],
+            title_color=COLORS["success"],
+            body_color=COLORS["text"],
+        )
+
+        draw_section(
+            "MODES",
+            [
+                "- Free Play: pick any unlocked jutsu and practice at your pace.",
+                "- Challenge: pick an unlocked jutsu and clear the full sequence as fast as possible.",
+                "- Jutsu Library: browse tiers, lock requirements, and progression status.",
+                "- Leaderboard: compare challenge times against other players.",
+            ],
+        )
+
+        draw_section(
+            "CONTROLS",
+            [
+                "- Menu navigation: mouse + left click",
+                "- Playing: LEFT / RIGHT arrows switch jutsu when allowed",
+                "- Challenge: SPACE starts countdown and restarts after results",
+                "- Exit current run: ESC or the in-game < BACK button",
+                "- Settings: preview camera only when manually enabled",
+            ],
+            title_color=COLORS["accent_glow"],
+        )
+
+        draw_section(
+            "PRIVACY & DATA",
+            [
+                "Camera frames are processed locally during gameplay and Settings preview.",
+                "No raw camera frames are uploaded by the game client.",
+                "If Discord login is used, session data is stored locally for authentication continuity.",
+                "Online features (leaderboard/profile/announcements) only send gameplay/profile data needed for those systems.",
+            ],
+        )
+
+        draw_section(
+            "TECH STACK",
+            [
+                f"- Client: Python + Pygame (version {APP_VERSION})",
+                "- Vision: MediaPipe + optional YOLO-based paths",
+                "- Effects: modular orchestrator with jutsu effect systems",
+                "- Backend integration: Supabase-powered online services",
+            ],
+            title_color=COLORS["success"],
+        )
+
+        draw_section(
+            "ROADMAP",
+            [
+                "- Expand jutsu roster and progression tiers",
+                "- Improve onboarding/tutorial for new players",
+                "- Add deeper challenge analytics and timing breakdowns",
+                "- Continue hardening camera/device handling UX",
+            ],
+            title_color=COLORS["accent"],
+        )
+
+        draw_section(
+            "LEGAL NOTICE",
+            [
+                "This is a non-profit fan-made project for educational and portfolio use.",
+                "Naruto and related names/characters are property of their respective rights holders.",
+                "This project is not affiliated with or endorsed by official rights holders.",
+            ],
+            title_color=COLORS["error"],
+            body_color=COLORS["text"],
+        )
+
+        max_scroll = max(0, c_y - panel_h + 10)
         if self.about_scroll_y > max_scroll:
             self.about_scroll_y = max_scroll
-            
-        # Define visible area from content surface
+        if self.about_scroll_y < 0:
+            self.about_scroll_y = 0
+
         area = pygame.Rect(0, self.about_scroll_y, panel_w, panel_h)
-        
-        # Blit to screen
         self.screen.blit(content_surf, (panel_x, panel_y), area)
-        
-        # Draw Scrollbar (if needed)
+
+        # Top panel UI (draw after content so it never gets hidden behind scrolling cards)
+        badge = pygame.Rect(panel_rect.right - 190, panel_rect.y + 12, 170, 30)
+        pygame.draw.rect(self.screen, (26, 26, 36), badge, border_radius=10)
+        pygame.draw.rect(self.screen, COLORS["border"], badge, 1, border_radius=10)
+        vtxt = self.fonts["small"].render(f"PYGAME v{APP_VERSION}", True, COLORS["accent"])
+        self.screen.blit(vtxt, vtxt.get_rect(center=badge.center))
+
+        hint = self.fonts["tiny"].render("Use mouse wheel to scroll", True, COLORS["text_muted"])
+        self.screen.blit(hint, (panel_rect.x + 16, panel_rect.y + 14))
+
         if max_scroll > 0:
-            bar_w = 6
-            bar_h = panel_h * (panel_h / content_h)
-            bar_x = panel_x + panel_w - 12
-            
-            # Use safe division for track position
-            scroll_ratio = self.about_scroll_y / max_scroll if max_scroll > 0 else 0
-            track_len = panel_h - bar_h - 20
-            bar_y = panel_y + 10 + (track_len * scroll_ratio)
-            
-            pygame.draw.rect(self.screen, (100, 100, 100), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
-        
-        # Border overlay (to cover any edge aliasing)
+            track_rect = pygame.Rect(panel_x + panel_w - 12, panel_y + 10, 6, panel_h - 20)
+            pygame.draw.rect(self.screen, (45, 45, 55), track_rect, border_radius=3)
+            thumb_h = max(36, int((panel_h / max(1, c_y)) * track_rect.height))
+            thumb_h = min(thumb_h, track_rect.height)
+            thumb_y = track_rect.y + int((track_rect.height - thumb_h) * (self.about_scroll_y / max_scroll))
+            pygame.draw.rect(self.screen, (130, 130, 145), (track_rect.x, thumb_y, track_rect.width, thumb_h), border_radius=3)
+
         pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=16)
-        
-        # Back button
+
+        back_btn = self.about_buttons["back"]
+        back_btn.rect.width = 220
+        back_btn.rect.height = 50
+        back_btn.rect.x = SCREEN_WIDTH // 2 - back_btn.rect.width // 2
+        back_btn.rect.y = min(SCREEN_HEIGHT - back_btn.rect.height - 16, panel_rect.bottom + 14)
+
         for btn in self.about_buttons.values():
             btn.render(self.screen)
 

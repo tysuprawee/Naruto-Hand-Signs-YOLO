@@ -144,10 +144,6 @@ class PlayingMixin:
 
     def render_playing(self, dt):
         """Render game playing state with Challenge Mode support."""
-        if hasattr(self, "playing_back_button"):
-            self.playing_back_button.rect.x = 22
-            self.playing_back_button.rect.y = 18
-
         # 1. Background Logic - Always draw first to clear previous frame
         if hasattr(self, 'bg_image') and self.bg_image:
              if hasattr(self, 'last_screen_w') and self.last_screen_w != SCREEN_WIDTH:
@@ -189,6 +185,12 @@ class PlayingMixin:
         
         cam_x = (SCREEN_WIDTH - new_w) // 2
         cam_y = 100 # Moved up slightly to save space
+        if hasattr(self, "playing_back_button"):
+            self.playing_back_button.rect.width = 120
+            self.playing_back_button.rect.height = 42
+            # Keep clear of top HUD text and avoid overlapping the camera frame/title.
+            self.playing_back_button.rect.x = max(16, cam_x - self.playing_back_button.rect.width - 24)
+            self.playing_back_button.rect.y = max(56, cam_y + 6)
         
         # 1. Challenge Mode Visibility
         should_detect = True

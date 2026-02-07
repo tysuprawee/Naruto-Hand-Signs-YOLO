@@ -131,11 +131,12 @@ class UISetupMixin:
         self.practice_buttons = {
             "freeplay": Button(cx - 150, 250, 300, 60, "FREE PLAY"),
             "challenge": Button(cx - 150, 330, 300, 60, "CHALLENGE"),
-            "library": Button(cx - 150, 410, 300, 60, "JUTSU LIBRARY", color=(90, 70, 40)),
+            "library": Button(cx - 150, 410, 300, 60, "JUTSU LIBRARY", color=(58, 92, 162)),
             "multiplayer": Button(cx - 150, 490, 300, 60, "MULTIPLAYER (LOCKED)", color=(40, 40, 40)),
             "leaderboard": Button(cx - 150, 570, 300, 50, "LEADERBOARD", color=(218, 165, 32)), # Gold
             "back": Button(cx - 100, 620, 200, 50, "BACK"),
         }
+        self.practice_buttons["multiplayer"].enabled = False
 
     def _create_about_ui(self):
         """Create about page UI."""
