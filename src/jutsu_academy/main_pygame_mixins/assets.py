@@ -1,10 +1,59 @@
 from src.jutsu_academy.main_pygame_shared import *
+import subprocess
+import sys
 
 
 class AssetsMixin:
-    def _scan_cameras(self):
-        """Scan for available cameras with advanced names if possible."""
+    def _macos_camera_names(self):
+        """Best-effort camera names on macOS via system_profiler."""
+        try:
+            out = subprocess.check_output(
+                ["system_profiler", "SPCameraDataType"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            return []
+
+        ignored = {
+            "camera",
+            "model id",
+            "unique id",
+            "serial number",
+            "vendor id",
+            "product id",
+            "version",
+        }
+        names = []
+        for line in out.splitlines():
+            s = line.strip()
+            if not s.endswith(":"):
+                continue
+            key = s[:-1].strip()
+            low = key.lower()
+            if not key:
+                continue
+            if low in ignored:
+                continue
+            if low.startswith("spcamera"):
+                continue
+            if low.startswith("usb") or low.startswith("built-in"):
+                continue
+            # Device groups are usually plain names with title case
+            if len(key) > 1 and any(c.isalpha() for c in key):
+                names.append(key)
+        return names
+
+    def _resolve_camera_capture_index(self, selected_idx):
+        if hasattr(self, "camera_device_indices") and self.camera_device_indices:
+            if 0 <= selected_idx < len(self.camera_device_indices):
+                return self.camera_device_indices[selected_idx]
+        return selected_idx
+
+    def _scan_cameras(self, probe=False):
+        """Get camera list. By default do not probe hardware to avoid startup camera access."""
         cameras = []
+        indices = []
         
         # 1. Try PyGrabber (Best for Windows Names)
         if FilterGraph:
@@ -12,17 +61,47 @@ class AssetsMixin:
                 graph = FilterGraph()
                 devices = graph.get_input_devices()
                 if devices:
+                    self.camera_device_indices = list(range(len(devices)))
                     return devices
             except:
                 pass
         
-        # 2. Fallback to OpenCV
-        for i in range(5):
+        # 2. Non-probing fallback (startup-safe)
+        if not probe:
+            self.camera_device_indices = []
+            return []
+
+        # 3. Fallback to OpenCV probing
+        for i in range(8):
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
-                cameras.append(f"Camera {i}")
-                cap.release()
-        return cameras if cameras else ["Camera 0"]
+                indices.append(i)
+            cap.release()
+
+        if not indices:
+            self.camera_device_indices = []
+            return []
+
+        # Use real camera names where possible
+        if sys.platform == "darwin":
+            names = self._macos_camera_names()
+            for pos, idx in enumerate(indices):
+                cameras.append(names[pos] if pos < len(names) else f"Camera {idx}")
+        else:
+            cameras = [f"Camera {idx}" for idx in indices]
+
+        self.camera_device_indices = indices
+        return cameras
+
+    def _effective_music_volume(self, ui_value):
+        """Map slider [0..1] to practical music gain."""
+        v = max(0.0, min(1.0, float(ui_value)))
+        return min(0.45, v ** 2.6)
+
+    def _effective_sfx_volume(self, ui_value):
+        """Map slider [0..1] to practical SFX gain."""
+        v = max(0.0, min(1.0, float(ui_value)))
+        return min(0.5, v ** 2.4)
 
     def _load_sounds(self):
         """Load sound effects."""
@@ -64,7 +143,7 @@ class AssetsMixin:
             if path.exists():
                 try:
                     pygame.mixer.music.load(str(path))
-                    pygame.mixer.music.set_volume(self.settings["music_vol"])
+                    pygame.mixer.music.set_volume(self._effective_music_volume(self.settings["music_vol"]))
                     pygame.mixer.music.play(-1)  # Loop
                     self.music_playing = True
                     print(f"[+] Music playing: {path}")
@@ -210,7 +289,7 @@ class AssetsMixin:
         if self.is_muted:
             pygame.mixer.music.set_volume(0)
         else:
-            pygame.mixer.music.set_volume(self.settings["music_vol"])
+            pygame.mixer.music.set_volume(self._effective_music_volume(self.settings["music_vol"]))
 
     def load_settings(self):
         """Load settings from file."""

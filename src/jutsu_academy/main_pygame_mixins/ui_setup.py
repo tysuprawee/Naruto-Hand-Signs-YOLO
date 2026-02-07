@@ -6,14 +6,15 @@ class UISetupMixin:
         """Create main menu UI."""
         cx = SCREEN_WIDTH // 2
         btn_w, btn_h = 280, 60
-        start_y = 380
+        start_y = 350
         gap = 70
         
         self.menu_buttons = {
             "practice": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "ENTER ACADEMY"),
-            "settings": Button(cx - btn_w // 2, start_y + gap, btn_w, btn_h, "SETTINGS"),
-            "about": Button(cx - btn_w // 2, start_y + gap * 2, btn_w, btn_h, "ABOUT", color=COLORS["bg_card"]),
-            "quit": Button(cx - btn_w // 2, start_y + gap * 3, btn_w, btn_h, "QUIT", color=COLORS["error"]),
+            "library": Button(cx - btn_w // 2, start_y + gap, btn_w, btn_h, "JUTSU LIBRARY", color=(90, 70, 40)),
+            "settings": Button(cx - btn_w // 2, start_y + gap * 2, btn_w, btn_h, "SETTINGS"),
+            "about": Button(cx - btn_w // 2, start_y + gap * 3, btn_w, btn_h, "ABOUT", color=COLORS["bg_card"]),
+            "quit": Button(cx - btn_w // 2, start_y + gap * 4, btn_w, btn_h, "QUIT", color=COLORS["error"]),
         }
         
         # Mute button position (top right)
@@ -22,25 +23,98 @@ class UISetupMixin:
     def _create_settings_ui(self):
         
         # Settings Page UI
-        cx = SCREEN_WIDTH // 2
-        cy = 180
+        cx = 290
+        cy = 170
+        camera_idx = self.settings["camera_idx"]
+        if len(self.cameras) == 0:
+            camera_idx = 0
+            self.settings["camera_idx"] = 0
+        elif camera_idx < 0 or camera_idx >= len(self.cameras):
+            camera_idx = 0
+            self.settings["camera_idx"] = 0
         
         self.settings_sliders = {
             "music": Slider(cx - 150, cy + 40, 300, "Music Volume", self.settings["music_vol"]),
             "sfx": Slider(cx - 150, cy + 120, 300, "SFX Volume", self.settings["sfx_vol"]),
         }
         
-        self.camera_dropdown = Dropdown(cx - 50, cy + 200, 200, self.cameras, self.settings["camera_idx"])
+        self.camera_dropdown = Dropdown(cx - 60, cy + 210, 230, self.cameras, camera_idx)
         
         self.settings_checkboxes = {
-            "debug_hands": Checkbox(cx - 150, cy + 260, 24, "Show Hand Skeleton", self.settings["debug_hands"]),
-            "use_mp": Checkbox(cx - 150, cy + 300, 24, "Use MediaPipe AI (Faster/Experimental)", self.settings["use_mediapipe_signs"]),
-            "restricted": Checkbox(cx - 150, cy + 340, 24, "Restricted Signs (Require 2 Hands)", self.settings.get("restricted_signs", False)),
+            "debug_hands": Checkbox(cx - 150, cy + 290, 24, "Show Hand Skeleton", self.settings["debug_hands"]),
+            "use_mp": Checkbox(cx - 150, cy + 330, 24, "Use MediaPipe AI (Faster/Experimental)", self.settings["use_mediapipe_signs"]),
+            "restricted": Checkbox(cx - 150, cy + 370, 24, "Restricted Signs (Require 2 Hands)", self.settings.get("restricted_signs", False)),
         }
         
         self.settings_buttons = {
-            "back": Button(cx - 100, cy + 400, 200, 50, "SAVE & BACK"),
+            "back": Button(cx - 100, cy + 450, 220, 52, "SAVE & BACK"),
         }
+
+    def _refresh_settings_camera_options(self):
+        """Probe and refresh camera dropdown options for settings."""
+        detected = self._scan_cameras(probe=True)
+        self.cameras = detected
+
+        if not hasattr(self, "camera_dropdown"):
+            return
+
+        self.camera_dropdown.options = list(self.cameras)
+        if len(self.cameras) == 0:
+            self.camera_dropdown.selected_idx = 0
+            self.camera_dropdown.is_open = False
+            self.settings["camera_idx"] = 0
+        elif self.camera_dropdown.selected_idx >= len(self.cameras):
+            self.camera_dropdown.selected_idx = 0
+            self.settings["camera_idx"] = 0
+
+    def _start_settings_camera_preview(self, camera_idx=None):
+        """Start camera preview used only in settings screen."""
+        if len(self.cameras) == 0:
+            self._stop_settings_camera_preview()
+            return False
+
+        idx = self.settings["camera_idx"] if camera_idx is None else int(camera_idx)
+        idx = max(0, min(idx, len(self.cameras) - 1))
+        if self.settings_preview_cap is not None and self.settings_preview_idx == idx:
+            return True
+
+        self._stop_settings_camera_preview()
+        capture_idx = self._resolve_camera_capture_index(idx)
+
+        if os.name == "nt":
+            cap = cv2.VideoCapture(capture_idx, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(capture_idx)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+
+        if not cap.isOpened():
+            cap.release()
+            self.settings_preview_cap = None
+            self.settings_preview_idx = None
+            return False
+
+        self.settings_preview_cap = cap
+        self.settings_preview_idx = idx
+        return True
+
+    def _stop_settings_camera_preview(self):
+        """Stop settings camera preview stream."""
+        if self.settings_preview_cap is not None:
+            self.settings_preview_cap.release()
+            self.settings_preview_cap = None
+            self.settings_preview_idx = None
+
+    def _get_settings_preview_surface(self):
+        """Read preview frame and convert to pygame surface."""
+        if self.settings_preview_cap is None:
+            return None
+        ret, frame = self.settings_preview_cap.read()
+        if not ret:
+            return None
+        frame = cv2.flip(frame, 1)
+        return self.cv2_to_pygame(frame)
 
     def _create_practice_select_ui(self):
         """Create practice mode selection UI."""
@@ -67,6 +141,12 @@ class UISetupMixin:
         self.leaderboard_buttons = {
             "back": Button(50, 50, 100, 40, "< Back", font_size=20),
             "refresh": Button(SCREEN_WIDTH - 150, 50, 100, 40, "Refresh", font_size=20, color=COLORS["success"])
+        }
+
+    def _create_library_ui(self):
+        """Create jutsu library UI."""
+        self.library_buttons = {
+            "back": Button(50, 50, 100, 40, "< Back", font_size=20),
         }
 
     def _load_ml_models(self):
@@ -120,6 +200,7 @@ class UISetupMixin:
             self.cap.release()
         
         cam_idx = self.settings["camera_idx"]
+        cam_idx = self._resolve_camera_capture_index(cam_idx)
         # Use DirectShow on Windows for better compatibility
         if os.name == 'nt':
             self.cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
@@ -141,6 +222,6 @@ class UISetupMixin:
     def play_sound(self, name):
         """Play a sound effect."""
         if name in self.sounds:
-            vol = self.settings["sfx_vol"]
+            vol = self._effective_sfx_volume(self.settings["sfx_vol"])
             self.sounds[name].set_volume(vol)
             self.sounds[name].play()

@@ -709,26 +709,72 @@ class RenderingMixin:
         title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 80))
         self.screen.blit(title, title_rect)
         
-        # Panel
-        panel_rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, 150, 400, 390)
+        # Main Panel
+        panel_rect = pygame.Rect(70, 130, SCREEN_WIDTH - 140, SCREEN_HEIGHT - 190)
         pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=16)
-        
+        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=16)
+
+        # Split sections
+        left_rect = pygame.Rect(panel_rect.x + 16, panel_rect.y + 16, 470, panel_rect.height - 32)
+        right_rect = pygame.Rect(left_rect.right + 16, panel_rect.y + 16, panel_rect.right - (left_rect.right + 32), panel_rect.height - 32)
+
+        pygame.draw.rect(self.screen, (30, 30, 40), left_rect, border_radius=12)
+        pygame.draw.rect(self.screen, COLORS["border"], left_rect, 1, border_radius=12)
+        pygame.draw.rect(self.screen, (26, 26, 34), right_rect, border_radius=12)
+        pygame.draw.rect(self.screen, COLORS["border"], right_rect, 1, border_radius=12)
+
+        controls_title = self.fonts["body"].render("AUDIO • CAMERA • INPUT", True, COLORS["accent"])
+        self.screen.blit(controls_title, (left_rect.x + 16, left_rect.y + 12))
+
         # Sliders
         for slider in self.settings_sliders.values():
             slider.render(self.screen)
         
-        # Camera dropdown
+        # Camera dropdown label
         cam_label = self.fonts["body_sm"].render("Camera:", True, COLORS["text"])
-        self.screen.blit(cam_label, (SCREEN_WIDTH // 2 - 150, 395))
-        self.camera_dropdown.render(self.screen)
+        self.screen.blit(cam_label, (left_rect.x + 16, 380))
+        if len(self.cameras) == 0:
+            no_cam = self.fonts["tiny"].render("No cameras detected", True, COLORS["error"])
+            self.screen.blit(no_cam, (left_rect.x + 140, 386))
         
         # Checkboxes
         for cb in self.settings_checkboxes.values():
             cb.render(self.screen)
             
+        # Camera preview pane
+        preview_title = self.fonts["body"].render("CAMERA PREVIEW", True, COLORS["accent"])
+        self.screen.blit(preview_title, (right_rect.x + 14, right_rect.y + 12))
+
+        preview_rect = pygame.Rect(right_rect.x + 14, right_rect.y + 50, right_rect.width - 28, right_rect.height - 100)
+        pygame.draw.rect(self.screen, (12, 12, 16), preview_rect, border_radius=10)
+        pygame.draw.rect(self.screen, COLORS["border"], preview_rect, 1, border_radius=10)
+
+        preview_surface = self._get_settings_preview_surface()
+        if preview_surface is not None:
+            sw, sh = preview_surface.get_size()
+            fit_scale = min(preview_rect.width / max(1, sw), preview_rect.height / max(1, sh))
+            fit_w = max(1, int(sw * fit_scale))
+            fit_h = max(1, int(sh * fit_scale))
+            fitted = pygame.transform.smoothscale(preview_surface, (fit_w, fit_h))
+            dx = preview_rect.x + (preview_rect.width - fit_w) // 2
+            dy = preview_rect.y + (preview_rect.height - fit_h) // 2
+            prev_clip = self.screen.get_clip()
+            self.screen.set_clip(preview_rect)
+            self.screen.blit(fitted, (dx, dy))
+            self.screen.set_clip(prev_clip)
+        else:
+            no_cam = self.fonts["body_sm"].render("Preview unavailable", True, COLORS["text_dim"])
+            self.screen.blit(no_cam, no_cam.get_rect(center=preview_rect.center))
+
+        hint = self.fonts["tiny"].render("Camera opens only in Settings preview and in active game.", True, COLORS["text_muted"])
+        self.screen.blit(hint, (right_rect.x + 14, right_rect.bottom - 24))
+
         # Buttons
         for btn in self.settings_buttons.values():
             btn.render(self.screen)
+
+        # Render dropdown last so its options are always in front
+        self.camera_dropdown.render(self.screen)
 
     def render_practice_select(self):
         """Render practice mode selection with enhanced styling."""
@@ -936,3 +982,160 @@ class RenderingMixin:
         # Back button
         for btn in self.about_buttons.values():
             btn.render(self.screen)
+
+    def render_jutsu_library(self):
+        """Render tiered jutsu library page with lock/unlock status."""
+        if self.bg_image:
+            self.screen.blit(self.bg_image, (0, 0))
+        else:
+            self.screen.fill(COLORS["bg_dark"])
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 170))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.fonts["title_md"].render("JUTSU LIBRARY", True, COLORS["accent"])
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 70)))
+
+        subtitle = self.fonts["body_sm"].render("Tiered unlock progression by level", True, COLORS["text_dim"])
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 108)))
+
+        tier_defs = [
+            ("Academy Tier", 0, 2),
+            ("Genin Tier", 3, 5),
+            ("Chunin Tier", 6, 10),
+            ("Jonin+ Tier", 11, 999999),
+        ]
+
+        tiers = []
+        for tier_name, min_lv, max_lv in tier_defs:
+            items = []
+            for name, data in self.jutsu_list.items():
+                req_lv = data.get("min_level", 0)
+                if min_lv <= req_lv <= max_lv:
+                    items.append((name, data))
+            if items:
+                items.sort(key=lambda x: x[1].get("min_level", 0))
+                tiers.append((tier_name, items))
+
+        panel_x = 70
+        panel_w = SCREEN_WIDTH - 140
+        panel_y = 140
+        panel_gap = 16
+        panel_h = 132
+        card_w = 180
+        card_h = 74
+        card_gap = 14
+
+        for idx, (tier_name, items) in enumerate(tiers):
+            y = panel_y + idx * (panel_h + panel_gap)
+            panel_rect = pygame.Rect(panel_x, y, panel_w, panel_h)
+
+            panel_bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            pygame.draw.rect(panel_bg, (22, 22, 30, 220), panel_bg.get_rect(), border_radius=14)
+            pygame.draw.rect(panel_bg, COLORS["border"], panel_bg.get_rect(), 1, border_radius=14)
+            self.screen.blit(panel_bg, panel_rect.topleft)
+
+            tier_text = self.fonts["body"].render(tier_name.upper(), True, COLORS["accent_glow"])
+            self.screen.blit(tier_text, (panel_rect.x + 16, panel_rect.y + 12))
+
+            start_x = panel_rect.x + 16
+            row_y = panel_rect.y + 44
+            for i, (jutsu_name, jutsu_data) in enumerate(items):
+                x = start_x + i * (card_w + card_gap)
+                if x + card_w > panel_rect.right - 16:
+                    break
+
+                req_lv = jutsu_data.get("min_level", 0)
+                unlocked = self.progression.level >= req_lv
+                card_rect = pygame.Rect(x, row_y, card_w, card_h)
+
+                if unlocked:
+                    fill = (35, 52, 42, 230)
+                    border = COLORS["success"]
+                    status = "UNLOCKED"
+                    status_color = COLORS["success"]
+                else:
+                    fill = (40, 40, 50, 220)
+                    border = COLORS["border"]
+                    status = f"LOCKED • LV.{req_lv}"
+                    status_color = COLORS["error"]
+
+                card_bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+                pygame.draw.rect(card_bg, fill, card_bg.get_rect(), border_radius=10)
+                pygame.draw.rect(card_bg, border, card_bg.get_rect(), 2, border_radius=10)
+                self.screen.blit(card_bg, card_rect.topleft)
+
+                name_surf = self.fonts["body_sm"].render(jutsu_name.upper(), True, COLORS["text"])
+                self.screen.blit(name_surf, (card_rect.x + 10, card_rect.y + 10))
+
+                status_surf = self.fonts["tiny"].render(status, True, status_color)
+                self.screen.blit(status_surf, (card_rect.x + 10, card_rect.y + 38))
+
+                seq_len = len(jutsu_data.get("sequence", []))
+                seq_surf = self.fonts["tiny"].render(f"SIGNS: {seq_len}", True, COLORS["text_dim"])
+                self.screen.blit(seq_surf, (card_rect.x + 10, card_rect.y + 54))
+
+        hint = self.fonts["body_sm"].render(
+            f"YOUR LEVEL: {self.progression.level} • RANK: {self.progression.rank}",
+            True,
+            COLORS["text"],
+        )
+        self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 56)))
+
+        for btn in self.library_buttons.values():
+            btn.render(self.screen)
+
+    def render_alert_modal(self):
+        """Render reusable blocking alert modal."""
+        if not self.active_alert:
+            return
+
+        title_text = self.active_alert.get("title", "Alert")
+        message_text = self.active_alert.get("message", "")
+        button_text = self.active_alert.get("button_text", "OK")
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 210))
+        self.screen.blit(overlay, (0, 0))
+
+        modal_w, modal_h = 560, 280
+        modal_x = (SCREEN_WIDTH - modal_w) // 2
+        modal_y = (SCREEN_HEIGHT - modal_h) // 2
+        modal_rect = pygame.Rect(modal_x, modal_y, modal_w, modal_h)
+
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], modal_rect, border_radius=16)
+        pygame.draw.rect(self.screen, COLORS["accent"], modal_rect, 2, border_radius=16)
+
+        title = self.fonts["title_sm"].render(title_text, True, COLORS["accent_glow"])
+        self.screen.blit(title, title.get_rect(center=(modal_rect.centerx, modal_rect.y + 48)))
+
+        words = message_text.split(" ")
+        lines = []
+        line = []
+        for word in words:
+            test = " ".join(line + [word])
+            if self.fonts["body_sm"].size(test)[0] < modal_w - 60:
+                line.append(word)
+            else:
+                lines.append(" ".join(line))
+                line = [word]
+        if line:
+            lines.append(" ".join(line))
+
+        start_y = modal_rect.y + 98
+        for i, msg_line in enumerate(lines[:4]):
+            msg = self.fonts["body_sm"].render(msg_line, True, COLORS["text"])
+            self.screen.blit(msg, msg.get_rect(center=(modal_rect.centerx, start_y + i * 28)))
+
+        btn_w, btn_h = 180, 52
+        self.alert_ok_rect = pygame.Rect(modal_rect.centerx - btn_w // 2, modal_rect.bottom - 78, btn_w, btn_h)
+        hovered = self.alert_ok_rect.collidepoint(pygame.mouse.get_pos())
+        color = COLORS["accent_glow"] if hovered else COLORS["accent"]
+        pygame.draw.rect(self.screen, color, self.alert_ok_rect, border_radius=10)
+
+        ok_text = self.fonts["body"].render(button_text, True, COLORS["text"])
+        self.screen.blit(ok_text, ok_text.get_rect(center=self.alert_ok_rect.center))
+
+        if hovered:
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)

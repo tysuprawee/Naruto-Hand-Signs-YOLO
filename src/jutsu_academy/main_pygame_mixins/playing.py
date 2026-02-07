@@ -270,7 +270,9 @@ class PlayingMixin:
                             bonus = seq_len * 10
                             total_xp = 50 + bonus # Base 50 + complexity bonus
                             
+                            prev_level = self.progression.level
                             is_lv_up = self.progression.add_xp(total_xp)
+                            self.process_unlock_alerts(previous_level=prev_level)
                             
                             # Add XP popup (Centered on Camera feed)
                             self.xp_popups.append({

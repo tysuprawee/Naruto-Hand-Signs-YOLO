@@ -44,8 +44,9 @@ class CoreMixin:
         }
         self.load_settings()
         
-        # Camera list
-        self.cameras = self._scan_cameras()
+        # Camera list (startup-safe; no hardware probe here)
+        self.cameras = self._scan_cameras(probe=False)
+        self.camera_device_indices = []
         
         # Fonts (Load once to avoid performance issues)
         self.fonts = {
@@ -90,6 +91,15 @@ class CoreMixin:
         # Progression System (Shinobi Path)
         self.progression = ProgressionManager(self.username, network_manager=self.network_manager)
         self.xp_popups = [] # List of {"text": str, "x": int, "y": int, "timer": float, "color": tuple}
+        self.unlocked_jutsus_known = {
+            name for name, data in self.jutsu_list.items()
+            if self.progression.level >= data.get("min_level", 0)
+        }
+
+        # Reusable alert queue/modal state
+        self.alert_queue = []
+        self.active_alert = None
+        self.alert_ok_rect = pygame.Rect(0, 0, 0, 0)
         
         # Announcements
         self.announcements = []
@@ -111,6 +121,8 @@ class CoreMixin:
         
         # Camera
         self.cap = None
+        self.settings_preview_cap = None
+        self.settings_preview_idx = None
         
         # Game state continued
         self.current_jutsu_idx = 0
@@ -185,6 +197,7 @@ class CoreMixin:
         self._create_practice_select_ui()
         self._create_about_ui()
         self._create_leaderboard_ui()
+        self._create_library_ui()
         
         # FPS tracking
         self.fps = 0
@@ -192,3 +205,50 @@ class CoreMixin:
         self.fps_timer = time.time()
         
         print("[+] Jutsu Academy initialized!")
+
+    def show_alert(self, title, message, button_text="OK"):
+        """Queue a reusable alert modal."""
+        self.alert_queue.append({
+            "title": str(title),
+            "message": str(message),
+            "button_text": str(button_text),
+        })
+
+    def process_unlock_alerts(self, previous_level=None):
+        """Queue alert(s) for newly unlocked jutsus."""
+        current_level = self.progression.level
+
+        if previous_level is not None:
+            newly_unlocked = sorted(
+                [
+                    name for name, data in self.jutsu_list.items()
+                    if previous_level < data.get("min_level", 0) <= current_level
+                ],
+                key=lambda name: self.jutsu_list[name].get("min_level", 0),
+            )
+        else:
+            currently_unlocked = {
+                name for name, data in self.jutsu_list.items()
+                if current_level >= data.get("min_level", 0)
+            }
+            newly_unlocked = sorted(
+                currently_unlocked - self.unlocked_jutsus_known,
+                key=lambda name: self.jutsu_list[name].get("min_level", 0),
+            )
+
+        for name in newly_unlocked:
+            min_lv = self.jutsu_list[name].get("min_level", 0)
+            self.show_alert(
+                "New Skill Unlocked",
+                f"{name} unlocked at LV.{min_lv}. Open Jutsu Library to preview sequence.",
+                "NICE",
+            )
+        self.unlocked_jutsus_known = {
+            name for name, data in self.jutsu_list.items()
+            if current_level >= data.get("min_level", 0)
+        }
+
+    def _activate_next_alert(self):
+        """Activate next queued alert if none is currently shown."""
+        if self.active_alert is None and self.alert_queue:
+            self.active_alert = self.alert_queue.pop(0)

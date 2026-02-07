@@ -364,13 +364,49 @@ class Dropdown:
         self.is_open = False
         self.rect = pygame.Rect(x, y, width, self.height)
         self.font = None
+        self.open_upward = False
+        self.icon_down = None
+        self.icon_up = None
+        self._icons_loaded = False
+
+    def _load_icons(self):
+        if self._icons_loaded:
+            return
+        self._icons_loaded = True
+        try:
+            down_path = Path("src/pics/down.png")
+            up_path = Path("src/pics/up.png")
+            if down_path.exists():
+                img = pygame.image.load(str(down_path))
+                self.icon_down = pygame.transform.smoothscale(img, (18, 18))
+            if up_path.exists():
+                img = pygame.image.load(str(up_path))
+                self.icon_up = pygame.transform.smoothscale(img, (18, 18))
+        except Exception:
+            self.icon_down = None
+            self.icon_up = None
+
+    def _option_rect(self, i):
+        if self.open_upward:
+            return pygame.Rect(self.x, self.y - (i + 1) * self.height, self.width, self.height)
+        return pygame.Rect(self.x, self.y + (i + 1) * self.height, self.width, self.height)
+
+    def _compute_open_direction(self):
+        screen = pygame.display.get_surface()
+        if not screen:
+            self.open_upward = False
+            return
+        total_h = len(self.options) * self.height
+        space_below = screen.get_height() - (self.y + self.height)
+        space_above = self.y
+        self.open_upward = space_below < total_h and space_above > space_below
     
     def update(self, mouse_pos, mouse_click, play_sound=None):
         if mouse_click:
             if self.is_open:
                 # Check if clicked on an option
                 for i, _ in enumerate(self.options):
-                    opt_rect = pygame.Rect(self.x, self.y + (i + 1) * self.height, self.width, self.height)
+                    opt_rect = self._option_rect(i)
                     if opt_rect.collidepoint(mouse_pos):
                         if play_sound: play_sound("click")
                         self.selected_idx = i
@@ -382,12 +418,14 @@ class Dropdown:
                      # Optional: Click outside close sound? No.
             elif self.rect.collidepoint(mouse_pos):
                 if play_sound: play_sound("click")
+                self._compute_open_direction()
                 self.is_open = True
         return False
     
     def render(self, surface):
         if self.font is None:
             self.font = pygame.font.Font(None, 26)
+        self._load_icons()
         
         # Main box
         pygame.draw.rect(surface, COLORS["bg_card"], self.rect, border_radius=8)
@@ -398,15 +436,21 @@ class Dropdown:
             text = self.font.render(self.options[self.selected_idx], True, COLORS["text"])
             surface.blit(text, (self.x + 15, self.y + 10))
         
-        # Arrow
-        arrow = "▼" if not self.is_open else "▲"
-        arrow_surf = self.font.render(arrow, True, COLORS["text_dim"])
-        surface.blit(arrow_surf, (self.x + self.width - 30, self.y + 10))
+        # Arrow icon
+        arrow_x = self.x + self.width - 30
+        arrow_y = self.y + 11
+        icon = self.icon_up if self.is_open else self.icon_down
+        if icon is not None:
+            surface.blit(icon, (arrow_x, arrow_y))
+        else:
+            arrow = "▲" if self.is_open else "▼"
+            arrow_surf = self.font.render(arrow, True, COLORS["text_dim"])
+            surface.blit(arrow_surf, (arrow_x, self.y + 10))
         
         # Dropdown options
         if self.is_open:
             for i, opt in enumerate(self.options):
-                opt_rect = pygame.Rect(self.x, self.y + (i + 1) * self.height, self.width, self.height)
+                opt_rect = self._option_rect(i)
                 hovered = opt_rect.collidepoint(pygame.mouse.get_pos())
                 
                 color = COLORS["bg_hover"] if hovered else COLORS["bg_card"]
@@ -415,12 +459,6 @@ class Dropdown:
                 
                 text = self.font.render(opt, True, COLORS["text"])
                 surface.blit(text, (self.x + 15, opt_rect.y + 10))
-                
-                # DEBUG: Hitbox
-                pygame.draw.rect(surface, (255, 0, 0), opt_rect, 1)
-        
-        # DEBUG: Hitbox
-        pygame.draw.rect(surface, (255, 0, 0), self.rect, 1)
 
 class Checkbox:
     def __init__(self, x, y, size, label, initial=False):
@@ -624,6 +662,7 @@ class ProgressionManager:
 # ═══════════════════════════════════════════════════════════════════════════
 class GameState:
     MENU = "menu"
+    JUTSU_LIBRARY = "jutsu_library"
     SETTINGS = "settings"
     PRACTICE_SELECT = "practice_select"
     LOADING = "loading"  # Loading screen while camera/models init

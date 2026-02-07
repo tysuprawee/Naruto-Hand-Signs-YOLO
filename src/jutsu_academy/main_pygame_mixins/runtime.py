@@ -8,6 +8,27 @@ class RuntimeMixin:
         
         # Capture events first
         events = pygame.event.get()
+        self._activate_next_alert()
+
+        # Global reusable alert modal: blocks underlying interactions
+        if self.active_alert:
+            mouse_pos = pygame.mouse.get_pos()
+            for event in events:
+                if event.type == pygame.QUIT:
+                    self.prev_state = self.state
+                    self.state = GameState.QUIT_CONFIRM
+                    self.active_alert = None
+                    return
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if self.alert_ok_rect.collidepoint(mouse_pos):
+                        self.play_sound("click")
+                        self.active_alert = None
+                        return
+                if event.type == pygame.KEYDOWN and event.key in [pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE]:
+                    self.play_sound("click")
+                    self.active_alert = None
+                    return
+            return
         
         # IMPORTANT: Announcement Overlay Clicks
         # If showing announcements, we intercept clicks and keys
@@ -42,6 +63,8 @@ class RuntimeMixin:
         for event in events:
             if event.type == pygame.QUIT:
                 # Intercept close button
+                if self.state == GameState.SETTINGS:
+                    self._stop_settings_camera_preview()
                 self.prev_state = self.state
                 self.state = GameState.QUIT_CONFIRM
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -54,7 +77,9 @@ class RuntimeMixin:
                         # ESC in menu -> Quit Confirm
                         self.prev_state = GameState.MENU
                         self.state = GameState.QUIT_CONFIRM
-                    elif self.state in [GameState.SETTINGS, GameState.ABOUT, GameState.PRACTICE_SELECT]:
+                    elif self.state in [GameState.SETTINGS, GameState.ABOUT, GameState.PRACTICE_SELECT, GameState.JUTSU_LIBRARY]:
+                        if self.state == GameState.SETTINGS:
+                            self._stop_settings_camera_preview()
                         self.state = GameState.MENU
                     elif self.state == GameState.LOGIN_MODAL:
                         if not self.login_in_progress:
@@ -205,7 +230,11 @@ class RuntimeMixin:
                         else:
                             self.state = GameState.PRACTICE_SELECT
                     elif name == "settings":
+                        self._refresh_settings_camera_options()
+                        self._start_settings_camera_preview(self.settings["camera_idx"])
                         self.state = GameState.SETTINGS
+                    elif name == "library":
+                        self.state = GameState.JUTSU_LIBRARY
                     elif name == "about":
                         self.state = GameState.ABOUT
                     elif name == "quit":
@@ -247,9 +276,11 @@ class RuntimeMixin:
             # Real-time volume updates while dragging
             if any_dragging or mouse_click:
                 if not self.is_muted:
-                    pygame.mixer.music.set_volume(self.settings_sliders["music"].value)
+                    pygame.mixer.music.set_volume(self._effective_music_volume(self.settings_sliders["music"].value))
             
-            self.camera_dropdown.update(mouse_pos, mouse_click, self.play_sound)
+            if self.camera_dropdown.update(mouse_pos, mouse_click, self.play_sound):
+                self.settings["camera_idx"] = self.camera_dropdown.selected_idx
+                self._start_settings_camera_preview(self.camera_dropdown.selected_idx)
             
             for name, cb in self.settings_checkboxes.items():
                  cb.update(mouse_pos, mouse_click, self.play_sound)
@@ -266,8 +297,9 @@ class RuntimeMixin:
                         self.settings["restricted_signs"] = self.settings_checkboxes["restricted"].checked
                         
                         if not self.is_muted:
-                            pygame.mixer.music.set_volume(self.settings["music_vol"])
+                            pygame.mixer.music.set_volume(self._effective_music_volume(self.settings["music_vol"]))
                         self.save_settings()
+                        self._stop_settings_camera_preview()
                         self.state = GameState.MENU
         
         elif self.state == GameState.PRACTICE_SELECT:
@@ -345,6 +377,12 @@ class RuntimeMixin:
                 if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "back":
                         self.state = GameState.MENU
+
+        elif self.state == GameState.JUTSU_LIBRARY:
+            for name, btn in self.library_buttons.items():
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
+                    if name == "back":
+                        self.state = GameState.MENU
         
         elif self.state == GameState.PLAYING:
             # Check arrow clicks
@@ -384,6 +422,8 @@ class RuntimeMixin:
                 self.render_practice_select()
             elif self.state == GameState.ABOUT:
                 self.render_about()
+            elif self.state == GameState.JUTSU_LIBRARY:
+                self.render_jutsu_library()
             elif self.state == GameState.LEADERBOARD:
                 self.render_leaderboard()
             elif self.state == GameState.LOADING:
@@ -425,6 +465,9 @@ class RuntimeMixin:
                 # Render underlying state first (to look like an overlay)
                 self.render_menu()
                 self.render_connection_lost()
+
+            if self.active_alert:
+                self.render_alert_modal()
             
             pygame.display.flip()
         
