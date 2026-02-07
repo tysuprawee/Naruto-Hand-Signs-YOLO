@@ -1,7 +1,228 @@
 from src.jutsu_academy.main_pygame_shared import *
+import datetime
 
 
 class CoreMixin:
+    def _daily_period_id(self):
+        return time.strftime("%Y-%m-%d")
+
+    def _weekly_period_id(self):
+        y, w, _ = datetime.date.today().isocalendar()
+        return f"{y}-W{w:02d}"
+
+    def _default_quest_state(self):
+        return {
+            "daily": {
+                "period": self._daily_period_id(),
+                "quests": {
+                    "d_signs": {"progress": 0, "claimed": False},
+                    "d_jutsus": {"progress": 0, "claimed": False},
+                    "d_xp": {"progress": 0, "claimed": False},
+                },
+            },
+            "weekly": {
+                "period": self._weekly_period_id(),
+                "quests": {
+                    "w_jutsus": {"progress": 0, "claimed": False},
+                    "w_challenges": {"progress": 0, "claimed": False},
+                    "w_xp": {"progress": 0, "claimed": False},
+                },
+            },
+        }
+
+    def _reset_daily_quests(self):
+        self.quest_state["daily"] = {
+            "period": self._daily_period_id(),
+            "quests": {
+                "d_signs": {"progress": 0, "claimed": False},
+                "d_jutsus": {"progress": 0, "claimed": False},
+                "d_xp": {"progress": 0, "claimed": False},
+            },
+        }
+
+    def _reset_weekly_quests(self):
+        self.quest_state["weekly"] = {
+            "period": self._weekly_period_id(),
+            "quests": {
+                "w_jutsus": {"progress": 0, "claimed": False},
+                "w_challenges": {"progress": 0, "claimed": False},
+                "w_xp": {"progress": 0, "claimed": False},
+            },
+        }
+
+    def _refresh_quest_periods(self):
+        changed = False
+        if self.quest_state.get("daily", {}).get("period") != self._daily_period_id():
+            self._reset_daily_quests()
+            changed = True
+        if self.quest_state.get("weekly", {}).get("period") != self._weekly_period_id():
+            self._reset_weekly_quests()
+            changed = True
+        if changed:
+            self._save_player_meta()
+
+    def _inc_quest_progress(self, quest_id, amount=1):
+        for scope in ("daily", "weekly"):
+            q = self.quest_state.get(scope, {}).get("quests", {}).get(quest_id)
+            if q and not q.get("claimed", False):
+                q["progress"] = int(q.get("progress", 0)) + int(amount)
+
+    def _record_sign_progress(self):
+        self._inc_quest_progress("d_signs", 1)
+
+    def _record_jutsu_completion(self, xp_gain, is_challenge):
+        self._inc_quest_progress("d_jutsus", 1)
+        self._inc_quest_progress("w_jutsus", 1)
+        self._inc_quest_progress("d_xp", int(xp_gain))
+        self._inc_quest_progress("w_xp", int(xp_gain))
+        if is_challenge:
+            self._inc_quest_progress("w_challenges", 1)
+
+    def _quest_definitions(self):
+        return [
+            ("daily", "d_signs", "Land 25 correct signs", 25, 120),
+            ("daily", "d_jutsus", "Complete 5 jutsu runs", 5, 180),
+            ("daily", "d_xp", "Earn 450 XP", 450, 250),
+            ("weekly", "w_jutsus", "Complete 30 jutsu runs", 30, 700),
+            ("weekly", "w_challenges", "Finish 12 challenge runs", 12, 900),
+            ("weekly", "w_xp", "Earn 4000 XP", 4000, 1200),
+        ]
+
+    def _claim_quest(self, scope, quest_id):
+        defs = {f"{s}:{qid}": (target, reward, title) for s, qid, title, target, reward in self._quest_definitions()}
+        key = f"{scope}:{quest_id}"
+        if key not in defs:
+            return False
+        target, reward, title = defs[key]
+        q = self.quest_state.get(scope, {}).get("quests", {}).get(quest_id)
+        if not q or q.get("claimed", False) or int(q.get("progress", 0)) < int(target):
+            return False
+        q["claimed"] = True
+        prev_level = self.progression.level
+        leveled = self.progression.add_xp(reward)
+        self.process_unlock_alerts(previous_level=prev_level)
+        self.show_alert("Quest Reward", f"{title}\nReward claimed: +{reward} XP", "CLAIMED")
+        if leveled:
+            self.xp_popups.append({
+                "text": f"RANK UP: {self.progression.rank}!",
+                "x": SCREEN_WIDTH // 2,
+                "y": SCREEN_HEIGHT // 2,
+                "timer": 2.8,
+                "color": COLORS["success"],
+            })
+        self._save_player_meta()
+        return True
+
+    def _mastery_thresholds(self, jutsu_name):
+        seq_len = max(1, len(self.jutsu_list.get(jutsu_name, {}).get("sequence", [])))
+        return {
+            "bronze": seq_len * 4.0,
+            "silver": seq_len * 2.8,
+            "gold": seq_len * 2.0,
+        }
+
+    def _get_mastery_tier(self, jutsu_name):
+        best = self.mastery_data.get(jutsu_name, {}).get("best_time")
+        if best is None:
+            return "none"
+        t = self._mastery_thresholds(jutsu_name)
+        if best <= t["gold"]:
+            return "gold"
+        if best <= t["silver"]:
+            return "silver"
+        if best <= t["bronze"]:
+            return "bronze"
+        return "none"
+
+    def _record_mastery_completion(self, jutsu_name, clear_time):
+        if clear_time is None or clear_time <= 0:
+            return
+        row = self.mastery_data.setdefault(jutsu_name, {})
+        best = row.get("best_time")
+        if best is None or clear_time < best:
+            row["best_time"] = float(clear_time)
+            self._save_player_meta()
+
+    def _load_player_meta(self):
+        path = Path("src/jutsu_academy/player_meta.json")
+        self.player_meta_path = path
+        self.tutorial_seen = False
+        self.tutorial_seen_at = None
+        self.tutorial_version = "1.0"
+        self._tutorial_cloud_sync_enabled = True
+        self.mastery_data = {}
+        self.quest_state = self._default_quest_state()
+        if path.exists():
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                self.tutorial_seen = bool(data.get("tutorial_seen", False))
+                self.tutorial_seen_at = data.get("tutorial_seen_at")
+                self.mastery_data = dict(data.get("mastery", {}))
+                qs = data.get("quests")
+                if isinstance(qs, dict):
+                    self.quest_state = qs
+            except Exception:
+                pass
+        # Best effort: sync tutorial flag from cloud profile for logged-in users.
+        if self.username != "Guest" and self.network_manager and self.network_manager.client:
+            try:
+                profile = self.network_manager.get_profile(self.username)
+                if isinstance(profile, dict) and profile:
+                    cloud_seen = bool(profile.get("tutorial_seen", False))
+                    cloud_seen_at = profile.get("tutorial_seen_at")
+                    cloud_ver = profile.get("tutorial_version")
+                    if cloud_seen:
+                        self.tutorial_seen = True
+                    if cloud_seen_at and not self.tutorial_seen_at:
+                        self.tutorial_seen_at = cloud_seen_at
+                    if cloud_ver:
+                        self.tutorial_version = str(cloud_ver)
+            except Exception:
+                pass
+        self._refresh_quest_periods()
+
+    def _sync_tutorial_meta_to_cloud(self):
+        """Best-effort cloud sync for tutorial completion state."""
+        if not getattr(self, "_tutorial_cloud_sync_enabled", True):
+            return
+        if self.username == "Guest":
+            return
+        if not self.network_manager or not self.network_manager.client:
+            return
+        try:
+            payload = {
+                "username": self.username,
+                "tutorial_seen": bool(self.tutorial_seen),
+                "tutorial_seen_at": self.tutorial_seen_at,
+                "tutorial_version": self.tutorial_version,
+            }
+            self.network_manager.upsert_profile(payload)
+        except Exception as e:
+            # If schema isn't migrated yet, avoid repeated noisy attempts.
+            self._tutorial_cloud_sync_enabled = False
+            print(f"[!] Tutorial cloud sync disabled: {e}")
+
+    def _save_player_meta(self):
+        if not hasattr(self, "player_meta_path"):
+            self.player_meta_path = Path("src/jutsu_academy/player_meta.json")
+        try:
+            self.player_meta_path.parent.mkdir(exist_ok=True)
+            with open(self.player_meta_path, "w") as f:
+                json.dump(
+                    {
+                        "tutorial_seen": bool(getattr(self, "tutorial_seen", False)),
+                        "tutorial_seen_at": getattr(self, "tutorial_seen_at", None),
+                        "mastery": getattr(self, "mastery_data", {}),
+                        "quests": getattr(self, "quest_state", self._default_quest_state()),
+                    },
+                    f,
+                    indent=2,
+                )
+        except Exception:
+            pass
+        self._sync_tutorial_meta_to_cloud()
+
     def __init__(self):
         from src.jutsu_academy.effects import EffectOrchestrator, ShadowCloneEffect
 
@@ -140,6 +361,11 @@ class CoreMixin:
         self.jutsu_active = False
         self.jutsu_start_time = 0
         self.jutsu_duration = 5.0
+        self.pending_sounds = []
+        self.pending_effects = []
+        self.clone_spawn_delay_s = 1.5
+        self.combo_clone_hold = False
+        self.combo_chidori_triple = False
         
         # Challenge Mode State
         self.challenge_state = "waiting" # waiting, countdown, active, results
@@ -172,6 +398,49 @@ class CoreMixin:
         self.video_cap = None
         self.jutsu_videos = {}
         self._load_jutsu_videos()
+        self._load_feature_icons()
+        self._load_player_meta()
+        self.sequence_run_start = None
+        self.quest_claim_rects = []
+        self.tutorial_step_index = 0
+        self.tutorial_steps = [
+            {
+                "icon_key": "camera",
+                "title": "Setup Your Camera",
+                "lines": [
+                    "Open Settings and choose your camera device.",
+                    "Enable preview to verify framing and lighting.",
+                    "Keep both hands visible in the camera panel.",
+                ],
+            },
+            {
+                "icon_key": "signs",
+                "title": "Perform Signs In Order",
+                "lines": [
+                    "Follow the sign sequence shown at the bottom.",
+                    "Each correct sign advances your combo step.",
+                    "Stable lighting improves landmark recognition.",
+                ],
+            },
+            {
+                "icon_key": "execute",
+                "title": "Execute The Jutsu",
+                "lines": [
+                    "Complete all signs to trigger the jutsu effect.",
+                    "You earn XP for successful completions.",
+                    "Level up to unlock higher-tier jutsu.",
+                ],
+            },
+            {
+                "icon_key": "challenge",
+                "title": "Challenge And Progress",
+                "lines": [
+                    "Use Challenge mode for timed runs and leaderboard ranking.",
+                    "Visit Quest Board for daily/weekly XP rewards.",
+                    "Master each jutsu to reach Bronze, Silver, and Gold tiers.",
+                ],
+            },
+        ]
 
         # Icons
         self.icons = {}
@@ -205,12 +474,17 @@ class CoreMixin:
         self._create_about_ui()
         self._create_leaderboard_ui()
         self._create_library_ui()
+        self._create_quest_ui()
+        self._create_tutorial_ui()
         self.playing_back_button = Button(24, 20, 120, 42, "< BACK", font_size=22, color=COLORS["bg_card"])
         
         # FPS tracking
         self.fps = 0
         self.frame_count = 0
         self.fps_timer = time.time()
+
+        if not self.tutorial_seen:
+            self.state = GameState.TUTORIAL
         
         print("[+] Jutsu Academy initialized!")
 

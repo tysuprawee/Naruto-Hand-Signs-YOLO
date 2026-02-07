@@ -4,10 +4,30 @@
 # When packaged into an EXE, this code is frozen inside the executable.
 
 OFFICIAL_JUTSUS = {
+    "Shadow Clone + Chidori Combo": {
+        "sequence": ["ram", "snake", "tiger", "ox", "hare", "monkey"],
+        "display_text": "COMBO: SHADOW CLONE + CHIDORI!",
+        "sound_path": None,
+        "video_path": None,
+        "effect": "lightning",
+        "min_level": 5,
+        "combo_parts": [
+            {
+                "name": "Shadow Clone",
+                "at_step": 3,
+                "effect": "clone"
+            },
+            {
+                "name": "Chidori",
+                "at_step": 6,
+                "effect": "lightning"
+            }
+        ]
+    },
     "Shadow Clone": {
         "sequence": ["ram", "snake", "tiger"],
         "display_text": "Kage Bunshin no Jutsu!",
-        "sound_path": None,
+        "sound_path": "src/sounds/clone.mp3",
         "video_path": None,
         "effect": "clone",
         "min_level": 0

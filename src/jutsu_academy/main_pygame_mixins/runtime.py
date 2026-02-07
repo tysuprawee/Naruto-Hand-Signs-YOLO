@@ -9,6 +9,7 @@ class RuntimeMixin:
         # Capture events first
         events = pygame.event.get()
         self._activate_next_alert()
+        self._refresh_quest_periods()
 
         # Global reusable alert modal: blocks underlying interactions
         if self.active_alert:
@@ -77,11 +78,18 @@ class RuntimeMixin:
                         # ESC in menu -> Quit Confirm
                         self.prev_state = GameState.MENU
                         self.state = GameState.QUIT_CONFIRM
-                    elif self.state in [GameState.SETTINGS, GameState.ABOUT, GameState.PRACTICE_SELECT, GameState.JUTSU_LIBRARY]:
+                    elif self.state in [GameState.SETTINGS, GameState.ABOUT, GameState.PRACTICE_SELECT, GameState.JUTSU_LIBRARY, GameState.QUESTS, GameState.TUTORIAL]:
                         if self.state == GameState.SETTINGS:
                             self._stop_settings_camera_preview()
                         if self.state == GameState.JUTSU_LIBRARY:
                             self.state = GameState.PRACTICE_SELECT
+                        elif self.state == GameState.QUESTS:
+                            self.state = GameState.PRACTICE_SELECT
+                        elif self.state == GameState.TUTORIAL:
+                            self.tutorial_seen = True
+                            self.tutorial_seen_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                            self._save_player_meta()
+                            self.state = GameState.MENU
                         else:
                             self.state = GameState.MENU
                     elif self.state == GameState.LOGIN_MODAL:
@@ -98,6 +106,7 @@ class RuntimeMixin:
                         self.switch_jutsu(1)
                     elif event.key == pygame.K_r:
                         self.current_step = 0
+                        self.sequence_run_start = None
                         self.jutsu_active = False
                         self.fire_particles.emitting = False
                     elif event.key == pygame.K_SPACE:
@@ -110,6 +119,7 @@ class RuntimeMixin:
                                 # Reset challenge
                                 self.challenge_state = "waiting"
                                 self.current_step = 0
+                                self.sequence_run_start = None
                                 self.jutsu_active = False
                                 self.submission_complete = False
                                 self.challenge_rank_info = ""
@@ -238,6 +248,9 @@ class RuntimeMixin:
                         self.state = GameState.SETTINGS
                     elif name == "about":
                         self.state = GameState.ABOUT
+                    elif name == "tutorial":
+                        self.tutorial_step_index = 0
+                        self.state = GameState.TUTORIAL
                     elif name == "quit":
                         self.prev_state = GameState.MENU
                         self.state = GameState.QUIT_CONFIRM
@@ -334,6 +347,8 @@ class RuntimeMixin:
                     elif name == "multiplayer":
                         self.play_sound("click")
                         print("[*] Multiplayer is currently locked.")
+                    elif name == "quests":
+                        self.state = GameState.QUESTS
                     elif name == "leaderboard":
                         self.state = GameState.LEADERBOARD
                         # Trigger fetch
@@ -399,6 +414,38 @@ class RuntimeMixin:
                 if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "back":
                         self.state = GameState.MENU
+
+        elif self.state == GameState.TUTORIAL:
+            step_idx = getattr(self, "tutorial_step_index", 0)
+            max_idx = len(self.tutorial_steps) - 1
+            for name, btn in self.tutorial_buttons.items():
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
+                    if name == "back":
+                        self.tutorial_step_index = max(0, step_idx - 1)
+                    elif name == "next":
+                        if step_idx >= max_idx:
+                            self.tutorial_seen = True
+                            self.tutorial_seen_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                            self._save_player_meta()
+                            self.state = GameState.MENU
+                        else:
+                            self.tutorial_step_index = min(max_idx, step_idx + 1)
+                    elif name == "skip":
+                        self.tutorial_seen = True
+                        self.tutorial_seen_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        self._save_player_meta()
+                        self.state = GameState.MENU
+
+        elif self.state == GameState.QUESTS:
+            if mouse_click:
+                for item in getattr(self, "quest_claim_rects", []):
+                    if item["rect"].collidepoint(mouse_pos):
+                        self._claim_quest(item["scope"], item["id"])
+                        break
+            for name, btn in self.quest_buttons.items():
+                if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
+                    if name == "back":
+                        self.state = GameState.PRACTICE_SELECT
 
         elif self.state == GameState.JUTSU_LIBRARY:
             if mouse_click:
@@ -469,8 +516,12 @@ class RuntimeMixin:
                 self.render_practice_select()
             elif self.state == GameState.ABOUT:
                 self.render_about()
+            elif self.state == GameState.TUTORIAL:
+                self.render_tutorial()
             elif self.state == GameState.JUTSU_LIBRARY:
                 self.render_jutsu_library()
+            elif self.state == GameState.QUESTS:
+                self.render_quests()
             elif self.state == GameState.LEADERBOARD:
                 self.render_leaderboard()
             elif self.state == GameState.LOADING:

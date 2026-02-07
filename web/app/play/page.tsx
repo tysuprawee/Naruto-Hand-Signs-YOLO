@@ -230,59 +230,55 @@ export default function PlayPage() {
     };
 
     return (
-        <div className="min-h-screen bg-[#fafafa] text-zinc-900 p-4 font-sans selection:bg-black selection:text-white">
+        <div className="min-h-screen bg-ninja-bg text-ninja-text p-4 font-sans selection:bg-ninja-accent selection:text-white flex flex-col items-center">
             {/* Header */}
-            <div className="flex items-center justify-between mb-8 max-w-[640px] mx-auto pt-4">
-                <Link href="/" className="flex items-center gap-2 text-zinc-500 hover:text-black transition-colors font-medium">
-                    <ArrowLeft className="w-5 h-5" /> <span className="hidden sm:inline">Back to Dojo</span>
+            <div className="w-full max-w-[640px] flex items-center justify-between mb-8 pt-4 z-10">
+                <Link href="/" className="flex items-center gap-2 text-ninja-dim hover:text-white transition-colors font-bold uppercase tracking-wider text-sm">
+                    <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Return to Hub</span>
                 </Link>
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2 text-sm font-bold text-zinc-400 bg-white border border-zinc-200 px-3 py-1 rounded-full shadow-sm">
+                    <div className="flex items-center gap-2 text-xs font-bold font-mono text-ninja-accent bg-ninja-card border border-ninja-border px-4 py-2 rounded-full shadow-lg">
                         <Camera className="w-4 h-4" />
-                        <span>FPS: {Math.round(1000 / (inferenceTime || 1))} ({inferenceTime.toFixed(1)}ms)</span>
+                        <span>FPS: {Math.round(1000 / (inferenceTime || 1))} <span className="text-ninja-dim">({inferenceTime.toFixed(1)}ms)</span></span>
                     </div>
                 </div>
             </div>
 
             {/* Main Viewport */}
-            <div className="relative mx-auto max-w-[640px] aspect-square bg-white rounded-none overflow-hidden border-[8px] border-zinc-900 shadow-2xl">
+            <div className="relative w-full max-w-[640px] aspect-square bg-ninja-black rounded-2xl overflow-hidden border-4 border-ninja-border shadow-[0_0_40px_rgba(0,0,0,0.5)] group">
                 {/* Status Overlays */}
                 {loading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 z-20 backdrop-blur-sm">
-                        <RefreshCw className="w-10 h-10 animate-spin text-black mb-4" />
-                        <p className="text-zinc-500 font-bold animate-pulse tracking-widest">INITIALIZING...</p>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-ninja-bg/90 z-20 backdrop-blur-sm">
+                        <RefreshCw className="w-12 h-12 animate-spin text-ninja-accent mb-6" />
+                        <p className="text-ninja-accent font-black animate-pulse tracking-[0.2em] text-sm">INITIALIZING NEURAL NET</p>
                     </div>
                 )}
 
                 {/* Report Button */}
                 <button
                     onClick={() => setShowConsentModal(true)}
-                    className="absolute top-4 right-4 z-30 flex items-center gap-2 bg-white text-black border-2 border-black px-4 py-2 text-xs font-black uppercase tracking-wider hover:bg-black hover:text-white transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[2px] hover:translate-y-[2px]"
+                    className="absolute top-4 right-4 z-30 flex items-center gap-2 bg-ninja-card/80 backdrop-blur-md text-white border border-ninja-border px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-ninja-accent hover:border-ninja-accent transition-all shadow-lg opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 duration-300"
                 >
                     <Bug className="w-3 h-3" />
-                    Contribute
+                    Unknown Sign?
                 </button>
 
                 {error && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-white z-20">
-                        <AlertTriangle className="w-12 h-12 text-red-600 mb-4" />
-                        <p className="text-red-600 font-black text-xl mb-2">SYSTEM ERROR</p>
-                        <p className="text-zinc-500 text-center px-8 mb-6">{error}</p>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-ninja-bg z-20 p-8 text-center">
+                        <AlertTriangle className="w-16 h-16 text-ninja-error mb-6 opacity-80" />
+                        <p className="text-ninja-error font-black text-2xl mb-2 tracking-tight">SYSTEM FAILURE</p>
+                        <p className="text-ninja-dim mb-8 max-w-xs leading-relaxed">{error}</p>
                         <button
                             onClick={() => window.location.reload()}
-                            className="bg-black text-white px-6 py-2 rounded-full font-bold uppercase tracking-wider text-sm hover:bg-zinc-800 transition-all shadow-lg flex items-center gap-2"
+                            className="bg-ninja-card hover:bg-ninja-hover text-white px-8 py-3 rounded-lg font-bold uppercase tracking-wider text-xs transition-all border border-ninja-border flex items-center gap-2"
                         >
                             <RefreshCw className="w-4 h-4" />
-                            Retry Camera
+                            Reboot System
                         </button>
                     </div>
                 )}
 
                 {/* Video/Canvas */}
-                {/* 
-                    Note: We keep the video hidden but accessible. 
-                    The canvas is what shows the output.
-                */}
                 <video
                     ref={videoRef}
                     className="hidden"
@@ -302,27 +298,33 @@ export default function PlayPage() {
                     className="w-full h-full object-cover bg-black"
                 />
 
+                {/* HUD Corners */}
+                <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-ninja-accent opacity-50 pointer-events-none"></div>
+                <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-ninja-accent opacity-50 pointer-events-none"></div>
+                <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-ninja-accent opacity-50 pointer-events-none"></div>
+                <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-ninja-accent opacity-50 pointer-events-none"></div>
+
                 {/* Current Detection Banner */}
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 w-full px-4 text-center">
+                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 w-full px-4 text-center pointer-events-none">
                     {detections.length > 0 ? (
-                        <div className="inline-block bg-white text-black border-2 border-black px-8 py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,0.2)]">
-                            <span className="font-black text-2xl tracking-widest uppercase">{detections[0].label}</span>
+                        <div className="inline-block bg-ninja-accent text-white px-8 py-2 rounded-lg shadow-[0_0_20px_rgba(255,120,50,0.4)] backdrop-blur-md">
+                            <span className="font-black text-3xl tracking-widest uppercase drop-shadow-md">{detections[0].label}</span>
                         </div>
                     ) : null}
                 </div>
             </div>
 
             {/* Active Class Grid */}
-            <div className="mt-8 max-w-[640px] mx-auto grid grid-cols-4 sm:grid-cols-6 gap-3">
+            <div className="mt-8 w-full max-w-[640px] grid grid-cols-4 sm:grid-cols-6 gap-2">
                 {LABELS.map(label => {
                     const isActive = detections.some(d => d.label === label);
                     return (
                         <div key={label}
                             className={`
-                                text-center py-3 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all duration-200 border-2
+                                text-center py-3 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all duration-200 rounded-md border
                                 ${isActive
-                                    ? 'bg-black text-white border-black scale-105 shadow-md'
-                                    : 'bg-white text-zinc-300 border-zinc-100'
+                                    ? 'bg-ninja-accent text-white border-ninja-accent shadow-[0_0_15px_rgba(255,120,50,0.3)] scale-105 z-10'
+                                    : 'bg-ninja-card text-ninja-dim border-ninja-border hover:border-ninja-hover'
                                 }
                             `}
                         >
@@ -334,29 +336,29 @@ export default function PlayPage() {
 
             {/* Consent Modal */}
             {showConsentModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm p-4">
-                    <div className="bg-white border-2 border-black max-w-sm w-full p-8 shadow-[8px_8px_0px_0px_rgba(0,0,0,0.2)] relative">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                    <div className="bg-ninja-card border border-ninja-border w-full max-w-sm p-8 rounded-2xl shadow-2xl relative">
                         <button
                             onClick={() => setShowConsentModal(false)}
-                            className="absolute top-4 right-4 text-zinc-400 hover:text-black"
+                            className="absolute top-4 right-4 text-ninja-dim hover:text-white transition-colors"
                         >
-                            <X className="w-6 h-6" />
+                            <X className="w-5 h-5" />
                         </button>
 
-                        <div className="mb-8">
-                            <div className="w-12 h-12 bg-zinc-100 flex items-center justify-center mb-6 border border-zinc-200">
-                                <UploadCloud className="w-6 h-6 text-black" />
+                        <div className="mb-8 text-center">
+                            <div className="w-16 h-16 bg-ninja-bg rounded-full flex items-center justify-center mb-6 mx-auto border border-ninja-border">
+                                <UploadCloud className="w-8 h-8 text-ninja-accent" />
                             </div>
-                            <h3 className="text-2xl font-black text-black mb-3 uppercase tracking-tight">Contribute Data</h3>
-                            <p className="text-zinc-600 text-sm leading-relaxed">
-                                By clicking "Upload", you agree to donate the current image (including your face/hands) to our open-source dataset.
+                            <h3 className="text-xl font-black text-white mb-2 uppercase tracking-wide">Contribute Data</h3>
+                            <p className="text-ninja-dim text-sm leading-relaxed">
+                                Helps the AI learn new hands. Uploads anonymous image for training.
                             </p>
                         </div>
 
-                        <div className="flex gap-4">
+                        <div className="flex gap-3">
                             <button
                                 onClick={() => setShowConsentModal(false)}
-                                className="flex-1 py-3 bg-zinc-100 hover:bg-zinc-200 text-black font-bold uppercase text-xs tracking-wider transition-colors"
+                                className="flex-1 py-3 bg-ninja-bg hover:bg-ninja-hover text-ninja-dim hover:text-white font-bold uppercase text-xs tracking-wider rounded-lg transition-colors border border-ninja-border"
                             >
                                 Cancel
                             </button>
@@ -364,8 +366,8 @@ export default function PlayPage() {
                                 onClick={handleReportIssue}
                                 disabled={isUploading || uploadStatus === 'success'}
                                 className={`
-                                    flex-1 py-3 font-bold flex items-center justify-center gap-2 transition-all uppercase text-xs tracking-wider text-white
-                                    ${uploadStatus === 'success' ? 'bg-green-600' : 'bg-black hover:bg-zinc-800'}
+                                    flex-1 py-3 font-bold flex items-center justify-center gap-2 transition-all uppercase text-xs tracking-wider text-white rounded-lg
+                                    ${uploadStatus === 'success' ? 'bg-ninja-success border border-ninja-success' : 'bg-ninja-accent hover:bg-ninja-accent-glow shadow-[0_0_15px_rgba(255,120,50,0.3)]'}
                                     ${isUploading ? 'opacity-80 cursor-wait' : ''}
                                 `}
                             >

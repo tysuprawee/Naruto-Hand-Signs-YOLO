@@ -3,6 +3,51 @@ from src.jutsu_academy.effects import EffectContext
 
 
 class PlayingMixin:
+    def _trigger_jutsu_payload(self, jutsu_name, effect_name):
+        """Trigger sound/effect/video payload for a (sub)jutsu event."""
+        # Queue signature sound (supports combo checkpoints without clobbering previous sound).
+        sound_name = None
+        if jutsu_name in self.sounds:
+            sound_name = jutsu_name
+        elif effect_name == "clone":
+            # No dedicated clone clip yet; use a light fallback signature.
+            sound_name = "each"
+        if sound_name:
+            if not hasattr(self, "pending_sounds") or self.pending_sounds is None:
+                self.pending_sounds = []
+            self.pending_sounds.append({
+                "name": sound_name,
+                "time": time.time() + 0.5,
+            })
+
+        if effect_name == "fire":
+            self.fire_particles.emitting = True
+
+        # Delay clone spawn to align better with longer clone signature audio.
+        if effect_name == "clone":
+            if not hasattr(self, "pending_effects") or self.pending_effects is None:
+                self.pending_effects = []
+            self.pending_effects.append({
+                "effect": effect_name,
+                "jutsu_name": jutsu_name,
+                "time": time.time() + max(0.0, float(getattr(self, "clone_spawn_delay_s", 0.9))),
+            })
+        else:
+            self.effect_orchestrator.on_jutsu_start(
+                effect_name,
+                EffectContext(jutsu_name=jutsu_name),
+            )
+
+        jutsu_data = self.jutsu_list.get(jutsu_name, {})
+        video_path = jutsu_data.get("video_path")
+        if video_path and Path(video_path).exists():
+            if self.video_cap:
+                self.video_cap.release()
+                self.video_cap = None
+            self.video_cap = cv2.VideoCapture(video_path)
+            self.current_video = jutsu_name
+            print(f"[+] Playing video: {video_path}")
+
     def _render_challenge_lobby(self, cam_x, cam_y, cam_w, cam_h):
         """Draw dimmed lobby with 'Press SPACE to Start'."""
         overlay = pygame.Surface((cam_w, cam_h), pygame.SRCALPHA)
@@ -260,72 +305,86 @@ class PlayingMixin:
                 if detected == target:
                     now = time.time()
                     if now - self.last_sign_time > self.cooldown:
+                        if self.current_step == 0:
+                            self.sequence_run_start = now
                         self.current_step += 1
                         self.last_sign_time = now
                         self.play_sound("each")
-                        
+                        self._record_sign_progress()
+
+                        # Combo checkpoint triggers: allow first jutsu effect to run while continuing signs.
+                        jutsu_name = self.jutsu_names[self.current_jutsu_idx]
+                        jutsu_data = self.jutsu_list[jutsu_name]
+                        combo_parts = jutsu_data.get("combo_parts", [])
+                        if combo_parts:
+                            if not hasattr(self, "combo_triggered_steps"):
+                                self.combo_triggered_steps = set()
+                            for part in combo_parts:
+                                step_idx = int(part.get("at_step", -1))
+                                if self.current_step == step_idx and step_idx not in self.combo_triggered_steps:
+                                    self.combo_triggered_steps.add(step_idx)
+                                    part_name = part.get("name", jutsu_name)
+                                    part_data = self.jutsu_list.get(part_name, {})
+                                    part_effect = part.get("effect", part_data.get("effect"))
+                                    if part_effect == "clone":
+                                        self.combo_clone_hold = True
+                                    if part_effect == "lightning" and str(part_name).lower() == "chidori":
+                                        self.combo_chidori_triple = True
+                                    self.play_sound("complete")
+                                    self._trigger_jutsu_payload(part_name, part_effect)
+
                         if self.current_step >= len(self.sequence):
                             self.jutsu_active = True
                             self.jutsu_start_time = time.time()
                             self.current_step = 0
-                            self.play_sound("complete")
-                            
+                            clear_time = None
+                            if self.game_mode == "challenge":
+                                clear_time = self.jutsu_start_time - self.challenge_start_time
+                            elif self.sequence_run_start:
+                                clear_time = self.jutsu_start_time - self.sequence_run_start
+                            self.sequence_run_start = None
+
                             # Award XP (Robust Progression)
-                            jutsu_name = self.jutsu_names[self.current_jutsu_idx]
                             seq_len = len(self.jutsu_list[jutsu_name]["sequence"])
                             bonus = seq_len * 10
                             total_xp = 50 + bonus # Base 50 + complexity bonus
-                            
+
                             prev_level = self.progression.level
                             is_lv_up = self.progression.add_xp(total_xp)
                             self.process_unlock_alerts(previous_level=prev_level)
-                            
+
                             # Add XP popup (Centered on Camera feed)
                             self.xp_popups.append({
-                                "text": f"+{total_xp} XP", 
-                                "x": cam_x + new_w // 2, 
-                                "y": cam_y + new_h // 2, 
-                                "timer": 2.0, 
+                                "text": f"+{total_xp} XP",
+                                "x": cam_x + new_w // 2,
+                                "y": cam_y + new_h // 2,
+                                "timer": 2.0,
                                 "color": COLORS["accent"]
                             })
                             if is_lv_up:
                                 self.xp_popups.append({
-                                    "text": f"RANK UP: {self.progression.rank}!", 
-                                    "x": cam_x + new_w // 2, 
-                                    "y": cam_y + new_h // 2 + 40, 
-                                    "timer": 3.0, 
+                                    "text": f"RANK UP: {self.progression.rank}!",
+                                    "x": cam_x + new_w // 2,
+                                    "y": cam_y + new_h // 2 + 40,
+                                    "timer": 3.0,
                                     "color": COLORS["success"]
                                 })
-                            
+
                             # STOP TIMER if in challenge
                             if self.game_mode == "challenge":
                                 self.challenge_final_time = self.jutsu_start_time - self.challenge_start_time
-                            
-                            jutsu_name = self.jutsu_names[self.current_jutsu_idx]
-                            jutsu_data = self.jutsu_list[jutsu_name]
-                            effect = jutsu_data.get("effect")
-                            
-                            # Schedule jutsu-specific sound (0.5s delay)
-                            if jutsu_name in self.sounds:
-                                self.pending_sound = {
-                                    "name": jutsu_name,
-                                    "time": time.time() + 0.5
-                                }
-                            
-                            # Start effect based on type
-                            if effect == "fire":
-                                self.fire_particles.emitting = True
-                            self.effect_orchestrator.on_jutsu_start(
-                                effect,
-                                EffectContext(jutsu_name=jutsu_name),
-                            )
-                            
-                            # Start video overlay if available
-                            if jutsu_name in self.jutsu_videos:
-                                video_path = self.jutsu_videos[jutsu_name]
-                                self.video_cap = cv2.VideoCapture(video_path)
-                                self.current_video = jutsu_name
-                                print(f"[+] Playing video: {video_path}")
+
+                            self._record_mastery_completion(jutsu_name, clear_time)
+                            self._record_jutsu_completion(total_xp, self.game_mode == "challenge")
+                            self._save_player_meta()
+
+                            # For normal jutsu, fire completion payload here.
+                            # Combo jutsus trigger payloads at configured checkpoints.
+                            if not combo_parts:
+                                self.play_sound("complete")
+                                self._trigger_jutsu_payload(jutsu_name, jutsu_data.get("effect"))
+                            else:
+                                self.combo_triggered_steps = set()
         
         # (Camera dimensions already calculated at the top)
         
@@ -362,6 +421,12 @@ class PlayingMixin:
                 self.jutsu_active = False
                 self.fire_particles.emitting = False
                 self.effect_orchestrator.on_jutsu_end(EffectContext())
+                if getattr(self, "combo_clone_hold", False):
+                    clone_effect = self.effect_orchestrator.effects.get("clone")
+                    if clone_effect:
+                        clone_effect.on_jutsu_end(EffectContext())
+                    self.combo_clone_hold = False
+                self.combo_chidori_triple = False
                 self.current_video = None
                 if self.video_cap:
                     self.video_cap.release()
@@ -462,10 +527,23 @@ class PlayingMixin:
                 self._render_challenge_results(cam_x, cam_y, new_w, new_h)
         
         # Sound Scheduler
-        if hasattr(self, "pending_sound") and self.pending_sound:
-             if time.time() >= self.pending_sound["time"]:
-                 self.play_sound(self.pending_sound["name"])
-                 self.pending_sound = None
+        if hasattr(self, "pending_sounds") and self.pending_sounds:
+            now = time.time()
+            due = [s for s in self.pending_sounds if now >= s.get("time", now + 999)]
+            self.pending_sounds = [s for s in self.pending_sounds if now < s.get("time", now + 999)]
+            for s in due:
+                self.play_sound(s.get("name", "each"))
+
+        # Delayed effect scheduler (used for clone timing sync).
+        if hasattr(self, "pending_effects") and self.pending_effects:
+            now = time.time()
+            due_fx = [e for e in self.pending_effects if now >= e.get("time", now + 999)]
+            self.pending_effects = [e for e in self.pending_effects if now < e.get("time", now + 999)]
+            for e in due_fx:
+                self.effect_orchestrator.on_jutsu_start(
+                    e.get("effect"),
+                    EffectContext(jutsu_name=e.get("jutsu_name")),
+                )
         
         # Video overlay (for Chidori, Rasengan, etc.)
         if self.current_video and self.video_cap and self.video_cap.isOpened():
@@ -507,9 +585,18 @@ class PlayingMixin:
                 vid_frame = np.rot90(vid_frame)
                 vid_frame = np.flipud(vid_frame)
                 vid_surface = pygame.surfarray.make_surface(vid_frame)
-                
-                # Blit centered on hand with additive blending
-                self.screen.blit(vid_surface, (cam_x + hx - dw//2, cam_y + hy - dh//2), special_flags=pygame.BLEND_RGB_ADD)
+
+                # Blit centered on hand with additive blending.
+                if getattr(self, "combo_chidori_triple", False) and str(self.current_video).lower() == "chidori":
+                    offsets = [(-int(dw * 0.35), -int(dh * 0.08)), (0, 0), (int(dw * 0.35), -int(dh * 0.08))]
+                else:
+                    offsets = [(0, 0)]
+                for ox, oy in offsets:
+                    self.screen.blit(
+                        vid_surface,
+                        (cam_x + hx - dw // 2 + ox, cam_y + hy - dh // 2 + oy),
+                        special_flags=pygame.BLEND_RGB_ADD,
+                    )
             else:
                 # Video ended, loop it
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)

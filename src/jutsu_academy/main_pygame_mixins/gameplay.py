@@ -46,8 +46,14 @@ class GameplayMixin:
             self.current_jutsu_idx = 0
         self.sequence = self.jutsu_list[self.jutsu_names[self.current_jutsu_idx]]["sequence"]
         self.current_step = 0
+        self.sequence_run_start = None
+        self.combo_triggered_steps = set()
+        self.combo_clone_hold = False
+        self.combo_chidori_triple = False
         self.jutsu_active = False
         self.fire_particles.emitting = False
+        self.pending_sounds = []
+        self.pending_effects = []
         self.effect_orchestrator.reset()
         
         # Challenge Mode Init
@@ -98,7 +104,15 @@ class GameplayMixin:
         self._stop_camera()
         self.fire_particles.emitting = False
         self.jutsu_active = False
+        self.sequence_run_start = None
+        self.combo_clone_hold = False
+        self.combo_chidori_triple = False
+        self.pending_sounds = []
+        self.pending_effects = []
         self.effect_orchestrator.on_jutsu_end(EffectContext())
+        clone_effect = self.effect_orchestrator.effects.get("clone")
+        if clone_effect:
+            clone_effect.on_jutsu_end(EffectContext())
         self.effect_orchestrator.reset()
         self.current_video = None
         if self.video_cap:
@@ -113,13 +127,22 @@ class GameplayMixin:
     def switch_jutsu(self, direction):
         """Switch to next/prev jutsu."""
         self.effect_orchestrator.on_jutsu_end(EffectContext())
+        clone_effect = self.effect_orchestrator.effects.get("clone")
+        if clone_effect:
+            clone_effect.on_jutsu_end(EffectContext())
         self.effect_orchestrator.reset()
         self.current_jutsu_idx = (self.current_jutsu_idx + direction) % len(self.jutsu_names)
         name = self.jutsu_names[self.current_jutsu_idx]
         self.sequence = self.jutsu_list[name]["sequence"]
         self.current_step = 0
+        self.sequence_run_start = None
+        self.combo_triggered_steps = set()
+        self.combo_clone_hold = False
+        self.combo_chidori_triple = False
         self.jutsu_active = False
         self.fire_particles.emitting = False
+        self.pending_sounds = []
+        self.pending_effects = []
 
     def detect_and_process(self, frame):
         """Run detection and check sequence."""

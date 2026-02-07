@@ -1,4 +1,5 @@
 from src.jutsu_academy.main_pygame_shared import *
+import datetime
 
 
 class RenderingMixin:
@@ -860,11 +861,12 @@ class RenderingMixin:
             "challenge": "Complete jutsus as fast as possible",
             "library": "Browse lock/unlock tiers and sign sequences",
             "multiplayer": "PvP Battles (Coming Soon)",
+            "quests": "Claim daily and weekly XP rewards",
             "leaderboard": "View the rankings of the greatest Shinobi"
         }
 
         # Robust layout: avoid overlap regardless of text sizes
-        primary_order = ["freeplay", "challenge", "library", "multiplayer", "leaderboard"]
+        primary_order = ["freeplay", "challenge", "library", "multiplayer", "quests", "leaderboard"]
         btn_w, btn_h = 300, 50
         desc_gap = 4
 
@@ -1099,6 +1101,147 @@ class RenderingMixin:
         for btn in self.about_buttons.values():
             btn.render(self.screen)
 
+    def render_tutorial(self):
+        """Render first-time onboarding/tutorial."""
+        if self.bg_image:
+            self.screen.blit(self.bg_image, (0, 0))
+        else:
+            self.screen.fill(COLORS["bg_dark"])
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 210))
+        self.screen.blit(overlay, (0, 0))
+
+        step_idx = max(0, min(getattr(self, "tutorial_step_index", 0), len(self.tutorial_steps) - 1))
+        step = self.tutorial_steps[step_idx]
+
+        title = self.fonts["title_md"].render("ACADEMY TUTORIAL", True, COLORS["accent"])
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 72)))
+
+        panel = pygame.Rect(140, 120, SCREEN_WIDTH - 280, SCREEN_HEIGHT - 260)
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel, border_radius=16)
+        pygame.draw.rect(self.screen, COLORS["border"], panel, 2, border_radius=16)
+
+        progress_text = self.fonts["body_sm"].render(f"STEP {step_idx + 1} / {len(self.tutorial_steps)}", True, COLORS["text_dim"])
+        self.screen.blit(progress_text, (panel.x + 20, panel.y + 16))
+
+        step_title = self.fonts["title_sm"].render(step["title"], True, COLORS["success"])
+        self.screen.blit(step_title, (panel.x + 20, panel.y + 46))
+
+        icon = self.tutorial_icons.get(step.get("icon_key", "camera"))
+        if icon:
+            self.screen.blit(icon, (panel.right - 120, panel.y + 26))
+
+        text_y = panel.y + 106
+        for line in step["lines"]:
+            line_s = self.fonts["body"].render(line, True, COLORS["text"])
+            self.screen.blit(line_s, (panel.x + 24, text_y))
+            text_y += 36
+
+        back_btn = self.tutorial_buttons["back"]
+        next_btn = self.tutorial_buttons["next"]
+        skip_btn = self.tutorial_buttons["skip"]
+        back_btn.enabled = step_idx > 0
+        next_btn.text = "FINISH" if step_idx == len(self.tutorial_steps) - 1 else "NEXT"
+
+        for b in self.tutorial_buttons.values():
+            b.render(self.screen)
+
+    def render_quests(self):
+        """Render daily/weekly quest board."""
+        self.quest_claim_rects = []
+        if self.bg_image:
+            self.screen.blit(self.bg_image, (0, 0))
+        else:
+            self.screen.fill(COLORS["bg_dark"])
+
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.fonts["title_md"].render("QUEST BOARD", True, COLORS["accent"])
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 64)))
+
+        panel = pygame.Rect(84, 106, SCREEN_WIDTH - 168, SCREEN_HEIGHT - 190)
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel, border_radius=16)
+        pygame.draw.rect(self.screen, COLORS["border"], panel, 2, border_radius=16)
+
+        daily_icon = self.quest_icons.get("daily")
+        weekly_icon = self.quest_icons.get("weekly")
+        if daily_icon:
+            self.screen.blit(daily_icon, (panel.x + 20, panel.y + 14))
+        if weekly_icon:
+            self.screen.blit(weekly_icon, (panel.centerx + 20, panel.y + 14))
+
+        d_title = self.fonts["body"].render("DAILY", True, COLORS["success"])
+        w_title = self.fonts["body"].render("WEEKLY", True, COLORS["accent_glow"])
+        self.screen.blit(d_title, (panel.x + 76, panel.y + 22))
+        self.screen.blit(w_title, (panel.centerx + 76, panel.y + 22))
+
+        now = datetime.datetime.now()
+        tomorrow = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        weekly_next = now + datetime.timedelta(days=(7 - now.weekday()))
+        weekly_next = weekly_next.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        daily_left = str(tomorrow - now).split(".")[0]
+        weekly_left = str(weekly_next - now).split(".")[0]
+        self.screen.blit(self.fonts["tiny"].render(f"Resets in {daily_left}", True, COLORS["text_dim"]), (panel.x + 76, panel.y + 50))
+        self.screen.blit(self.fonts["tiny"].render(f"Resets in {weekly_left}", True, COLORS["text_dim"]), (panel.centerx + 76, panel.y + 50))
+
+        defs = self._quest_definitions()
+        card_w = (panel.width - 52) // 2
+        card_h = 78
+        start_y = panel.y + 88
+
+        for i, (scope, qid, label, target, reward) in enumerate(defs):
+            col = 0 if scope == "daily" else 1
+            row = i % 3
+            x = panel.x + 18 + col * (card_w + 16)
+            y = start_y + row * (card_h + 16)
+            rect = pygame.Rect(x, y, card_w, card_h)
+            pygame.draw.rect(self.screen, (24, 24, 34, 230), rect, border_radius=12)
+            pygame.draw.rect(self.screen, COLORS["border"], rect, 1, border_radius=12)
+
+            q = self.quest_state.get(scope, {}).get("quests", {}).get(qid, {"progress": 0, "claimed": False})
+            progress = int(q.get("progress", 0))
+            claimed = bool(q.get("claimed", False))
+            pct = max(0.0, min(1.0, progress / max(1, target)))
+
+            label_s = self.fonts["body_sm"].render(label, True, COLORS["text"])
+            self.screen.blit(label_s, (rect.x + 12, rect.y + 10))
+
+            stat_s = self.fonts["tiny"].render(f"{min(progress, target)}/{target}", True, COLORS["text_dim"])
+            self.screen.blit(stat_s, (rect.right - 62, rect.y + 14))
+
+            track = pygame.Rect(rect.x + 12, rect.y + 42, rect.width - 140, 16)
+            pygame.draw.rect(self.screen, (50, 50, 64), track, border_radius=8)
+            if pct > 0:
+                fill = pygame.Rect(track.x, track.y, int(track.width * pct), track.height)
+                pygame.draw.rect(self.screen, COLORS["accent"], fill, border_radius=8)
+
+            reward_txt = self.fonts["tiny"].render(f"+{reward} XP", True, COLORS["accent_glow"])
+            self.screen.blit(reward_txt, (track.right + 10, track.y + 1))
+
+            claim_rect = pygame.Rect(rect.right - 108, rect.y + 36, 92, 30)
+            ready = (progress >= target) and (not claimed)
+            if claimed:
+                pygame.draw.rect(self.screen, (60, 80, 65), claim_rect, border_radius=8)
+                cap = self.fonts["tiny"].render("CLAIMED", True, COLORS["success"])
+            elif ready:
+                pygame.draw.rect(self.screen, COLORS["accent"], claim_rect, border_radius=8)
+                cap = self.fonts["tiny"].render("CLAIM", True, COLORS["text"])
+                self.quest_claim_rects.append({"rect": claim_rect, "scope": scope, "id": qid})
+            else:
+                pygame.draw.rect(self.screen, (55, 55, 65), claim_rect, border_radius=8)
+                cap = self.fonts["tiny"].render("LOCKED", True, COLORS["text_dim"])
+            self.screen.blit(cap, cap.get_rect(center=claim_rect.center))
+
+        hint = self.fonts["tiny"].render("Complete quests to claim XP rewards and level up faster.", True, COLORS["text_muted"])
+        self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, panel.bottom - 20)))
+
+        for btn in self.quest_buttons.values():
+            btn.render(self.screen)
+
     def render_jutsu_library(self):
         """Render tiered jutsu library page with lock/unlock status."""
         self.library_item_rects = []
@@ -1202,6 +1345,13 @@ class RenderingMixin:
                 seq_len = len(jutsu_data.get("sequence", []))
                 seq_surf = self.fonts["tiny"].render(f"SIGNS: {seq_len}", True, COLORS["text_dim"])
                 self.screen.blit(seq_surf, (card_rect.x + 10, card_rect.y + 54))
+
+                tier = self._get_mastery_tier(jutsu_name)
+                badge = self.mastery_icons.get(tier, self.mastery_icons.get("none"))
+                if badge:
+                    self.screen.blit(badge, (card_rect.right - 34, card_rect.y + 6))
+                tier_text = self.fonts["tiny"].render(f"M: {tier.upper()}", True, COLORS["text_dim"])
+                self.screen.blit(tier_text, (card_rect.x + 92, card_rect.y + 54))
 
                 self.library_item_rects.append({
                     "rect": card_rect,

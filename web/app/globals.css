@@ -1,26 +1,54 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Game Colors converted to Hex */
+  --bg-dark: #0f0f14;
+  --bg-panel: #191923;
+  --bg-card: #232332;
+  --bg-hover: #2d2d41;
+
+  --accent: #ff7832;
+  /* Naruto Orange */
+  --accent-dark: #c85a1e;
+  --accent-glow: #ff9650;
+
+  --success: #32c878;
+  --error: #dc3c3c;
+
+  --text-main: #f0f0f5;
+  --text-dim: #8c8ca0;
+  --text-muted: #505064;
+  --border: #3c3c50;
+
+  /* Default theme mapping */
+  --background: var(--bg-dark);
+  --foreground: var(--text-main);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Expose game colors to Tailwind */
+  --color-ninja-bg: var(--bg-dark);
+  --color-ninja-panel: var(--bg-panel);
+  --color-ninja-card: var(--bg-card);
+  --color-ninja-hover: var(--bg-hover);
+  --color-ninja-accent: var(--accent);
+  --color-ninja-accent-dark: var(--accent-dark);
+  --color-ninja-accent-glow: var(--accent-glow);
+  --color-ninja-text: var(--text-main);
+  --color-ninja-dim: var(--text-dim);
+  --color-ninja-muted: var(--text-muted);
+  --color-ninja-border: var(--border);
+  --color-ninja-success: var(--success);
+  --color-ninja-error: var(--error);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

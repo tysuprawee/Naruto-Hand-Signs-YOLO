@@ -4,6 +4,50 @@ import sys
 
 
 class AssetsMixin:
+    def _load_ui_image(self, path, size=None):
+        p = Path(path)
+        if not p.exists():
+            p = Path("src/pics/placeholder.png")
+        try:
+            img = pygame.image.load(str(p)).convert_alpha()
+            if size:
+                img = pygame.transform.smoothscale(img, size)
+            return img
+        except Exception:
+            return None
+
+    def _load_feature_icons(self):
+        """Load tutorial, mastery, quest and shared UI icons."""
+        self.tutorial_icons = {
+            "camera": self._load_ui_image("src/pics/tutorial/step_camera.png", (80, 80)),
+            "signs": self._load_ui_image("src/pics/tutorial/step_signs.png", (80, 80)),
+            "execute": self._load_ui_image("src/pics/tutorial/step_execute.png", (80, 80)),
+            "challenge": self._load_ui_image("src/pics/tutorial/step_challenge.png", (80, 80)),
+            "panel_bg": self._load_ui_image("src/pics/tutorial/panel_bg.png"),
+        }
+        self.mastery_icons = {
+            "none": self._load_ui_image("src/pics/mastery/locked_badge.png", (28, 28)),
+            "bronze": self._load_ui_image("src/pics/mastery/bronze_badge.png", (28, 28)),
+            "silver": self._load_ui_image("src/pics/mastery/silver_badge.png", (28, 28)),
+            "gold": self._load_ui_image("src/pics/mastery/gold_badge.png", (28, 28)),
+        }
+        self.quest_icons = {
+            "daily": self._load_ui_image("src/pics/quests/daily_icon.png", (48, 48)),
+            "weekly": self._load_ui_image("src/pics/quests/weekly_icon.png", (48, 48)),
+            "card_bg": self._load_ui_image("src/pics/quests/quest_card_bg.png"),
+            "progress_fill": self._load_ui_image("src/pics/quests/progress_fill.png"),
+            "progress_track": self._load_ui_image("src/pics/quests/progress_track.png"),
+            "claim_btn": self._load_ui_image("src/pics/quests/claim_btn.png"),
+            "claimed_stamp": self._load_ui_image("src/pics/quests/claimed_stamp.png"),
+            "refresh": self._load_ui_image("src/pics/quests/refresh_timer.png", (20, 20)),
+        }
+        self.ui_icons = {
+            "info": self._load_ui_image("src/pics/ui/info.png", (20, 20)),
+            "check": self._load_ui_image("src/pics/ui/check.png", (20, 20)),
+            "lock": self._load_ui_image("src/pics/ui/lock.png", (20, 20)),
+            "reward_xp": self._load_ui_image("src/pics/ui/reward_xp.png", (20, 20)),
+        }
+
     def _macos_camera_names(self):
         """Best-effort camera names on macOS via system_profiler."""
         try:
@@ -124,7 +168,7 @@ class AssetsMixin:
             if sound_path and Path(sound_path).exists():
                 try:
                     self.sounds[name] = pygame.mixer.Sound(sound_path)
-                    if name == "chidori":
+                    if str(name).lower() == "chidori":
                         self.sounds[name].set_volume(0.3)
                     print(f"[+] Jutsu sound loaded: {name}")
                 except Exception as e:

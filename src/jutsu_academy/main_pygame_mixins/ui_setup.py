@@ -6,14 +6,15 @@ class UISetupMixin:
         """Create main menu UI."""
         cx = SCREEN_WIDTH // 2
         btn_w, btn_h = 280, 60
-        start_y = 380
+        start_y = 345
         gap = 70
         
         self.menu_buttons = {
             "practice": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "ENTER ACADEMY"),
             "settings": Button(cx - btn_w // 2, start_y + gap, btn_w, btn_h, "SETTINGS"),
-            "about": Button(cx - btn_w // 2, start_y + gap * 2, btn_w, btn_h, "ABOUT", color=COLORS["bg_card"]),
-            "quit": Button(cx - btn_w // 2, start_y + gap * 3, btn_w, btn_h, "QUIT", color=COLORS["error"]),
+            "tutorial": Button(cx - btn_w // 2, start_y + gap * 2, btn_w, btn_h, "TUTORIAL", color=COLORS["bg_card"]),
+            "about": Button(cx - btn_w // 2, start_y + gap * 3, btn_w, btn_h, "ABOUT", color=COLORS["bg_card"]),
+            "quit": Button(cx - btn_w // 2, start_y + gap * 4, btn_w, btn_h, "QUIT", color=COLORS["error"]),
         }
         
         # Mute button position (top right)
@@ -133,7 +134,8 @@ class UISetupMixin:
             "challenge": Button(cx - 150, 330, 300, 60, "CHALLENGE"),
             "library": Button(cx - 150, 410, 300, 60, "JUTSU LIBRARY", color=(58, 92, 162)),
             "multiplayer": Button(cx - 150, 490, 300, 60, "MULTIPLAYER (LOCKED)", color=(40, 40, 40)),
-            "leaderboard": Button(cx - 150, 570, 300, 50, "LEADERBOARD", color=(218, 165, 32)), # Gold
+            "quests": Button(cx - 150, 570, 300, 50, "QUEST BOARD", color=(80, 140, 110)),
+            "leaderboard": Button(cx - 150, 635, 300, 50, "LEADERBOARD", color=(218, 165, 32)), # Gold
             "back": Button(cx - 100, 620, 200, 50, "BACK"),
         }
         self.practice_buttons["multiplayer"].enabled = False
@@ -157,6 +159,21 @@ class UISetupMixin:
         """Create jutsu library UI."""
         self.library_buttons = {
             "back": Button(50, 50, 100, 40, "< Back", font_size=20),
+        }
+
+    def _create_quest_ui(self):
+        """Create quest board UI."""
+        self.quest_buttons = {
+            "back": Button(40, 40, 120, 44, "< BACK", font_size=22, color=COLORS["bg_card"]),
+        }
+
+    def _create_tutorial_ui(self):
+        """Create tutorial navigation buttons."""
+        cx = SCREEN_WIDTH // 2
+        self.tutorial_buttons = {
+            "back": Button(cx - 260, SCREEN_HEIGHT - 110, 160, 52, "BACK", color=COLORS["bg_card"]),
+            "next": Button(cx + 100, SCREEN_HEIGHT - 110, 160, 52, "NEXT"),
+            "skip": Button(cx - 80, SCREEN_HEIGHT - 110, 160, 52, "SKIP", color=COLORS["bg_card"]),
         }
 
     def _load_ml_models(self):

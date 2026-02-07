@@ -677,6 +677,8 @@ class ProgressionManager:
 class GameState:
     MENU = "menu"
     JUTSU_LIBRARY = "jutsu_library"
+    QUESTS = "quests"
+    TUTORIAL = "tutorial"
     SETTINGS = "settings"
     PRACTICE_SELECT = "practice_select"
     LOADING = "loading"  # Loading screen while camera/models init
