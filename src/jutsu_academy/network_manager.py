@@ -206,12 +206,12 @@ class NetworkManager:
             return []
 
     def get_announcements(self, limit=10):
-        """Fetch active announcements from app_config table"""
+        """Fetch active announcements + version entries from app_config table."""
         if not self.client: return []
         try:
             response = self.client.table('app_config')\
                 .select('*')\
-                .eq('type', 'announcement')\
+                .in_('type', ['announcement', 'version'])\
                 .eq('is_active', True)\
                 .order('priority', desc=True)\
                 .order('created_at', desc=True)\

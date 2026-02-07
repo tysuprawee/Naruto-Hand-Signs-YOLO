@@ -16,6 +16,8 @@ class CoreMixin:
         self.state = GameState.MENU
         self.prev_state = None
         self.about_scroll_y = 0  # Scroll position for About page
+        self.library_mode = "browse"  # browse | freeplay | challenge
+        self.library_item_rects = []
         
         # User/Auth state
         self.username = "Guest"
@@ -39,10 +41,12 @@ class CoreMixin:
             "sfx_vol": 0.7,
             "camera_idx": 0,
             "debug_hands": False,
-            "use_mediapipe_signs": True, # NEW: Toggle between YOLO and MediaPipe
-            "restricted_signs": False     # NEW: Only detect when 2 hands are visible
+            "use_mediapipe_signs": True, # Forced ON
+            "restricted_signs": True     # Forced ON
         }
         self.load_settings()
+        self.settings["use_mediapipe_signs"] = True
+        self.settings["restricted_signs"] = True
         
         # Camera list (startup-safe; no hardware probe here)
         self.cameras = self._scan_cameras(probe=False)
@@ -107,6 +111,7 @@ class CoreMixin:
         self.show_announcements = False
         self.current_announcement_idx = 0
         self.announcements_fetched = False
+        self.version_alert_for_version = None
         self.announcement_timer_start = time.time()
         self.announcement_auto_show_delay = 1.5
         
@@ -123,6 +128,8 @@ class CoreMixin:
         self.cap = None
         self.settings_preview_cap = None
         self.settings_preview_idx = None
+        self.settings_preview_enabled = False
+        self.camera_scan_last_at = 0.0
         
         # Game state continued
         self.current_jutsu_idx = 0
@@ -198,6 +205,7 @@ class CoreMixin:
         self._create_about_ui()
         self._create_leaderboard_ui()
         self._create_library_ui()
+        self.playing_back_button = Button(24, 20, 120, 42, "< BACK", font_size=22, color=COLORS["bg_card"])
         
         # FPS tracking
         self.fps = 0

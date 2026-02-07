@@ -6,15 +6,14 @@ class UISetupMixin:
         """Create main menu UI."""
         cx = SCREEN_WIDTH // 2
         btn_w, btn_h = 280, 60
-        start_y = 350
+        start_y = 380
         gap = 70
         
         self.menu_buttons = {
             "practice": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "ENTER ACADEMY"),
-            "library": Button(cx - btn_w // 2, start_y + gap, btn_w, btn_h, "JUTSU LIBRARY", color=(90, 70, 40)),
-            "settings": Button(cx - btn_w // 2, start_y + gap * 2, btn_w, btn_h, "SETTINGS"),
-            "about": Button(cx - btn_w // 2, start_y + gap * 3, btn_w, btn_h, "ABOUT", color=COLORS["bg_card"]),
-            "quit": Button(cx - btn_w // 2, start_y + gap * 4, btn_w, btn_h, "QUIT", color=COLORS["error"]),
+            "settings": Button(cx - btn_w // 2, start_y + gap, btn_w, btn_h, "SETTINGS"),
+            "about": Button(cx - btn_w // 2, start_y + gap * 2, btn_w, btn_h, "ABOUT", color=COLORS["bg_card"]),
+            "quit": Button(cx - btn_w // 2, start_y + gap * 3, btn_w, btn_h, "QUIT", color=COLORS["error"]),
         }
         
         # Mute button position (top right)
@@ -42,18 +41,25 @@ class UISetupMixin:
         
         self.settings_checkboxes = {
             "debug_hands": Checkbox(cx - 150, cy + 290, 24, "Show Hand Skeleton", self.settings["debug_hands"]),
-            "use_mp": Checkbox(cx - 150, cy + 330, 24, "Use MediaPipe AI (Faster/Experimental)", self.settings["use_mediapipe_signs"]),
-            "restricted": Checkbox(cx - 150, cy + 370, 24, "Restricted Signs (Require 2 Hands)", self.settings.get("restricted_signs", False)),
+            "use_mp": Checkbox(cx - 150, cy + 330, 24, "Use MediaPipe AI (Faster/Experimental) - Always On", True),
+            "restricted": Checkbox(cx - 150, cy + 370, 24, "Restricted Signs (Require 2 Hands) - Always On", True),
         }
         
         self.settings_buttons = {
+            "preview_toggle": Button(cx - 100, cy + 395, 220, 44, "ENABLE PREVIEW", color=COLORS["bg_card"]),
+            "scan_cameras": Button(cx - 100, cy + 350, 220, 40, "SCAN CAMERAS", color=COLORS["bg_card"]),
             "back": Button(cx - 100, cy + 450, 220, 52, "SAVE & BACK"),
         }
 
-    def _refresh_settings_camera_options(self):
+    def _refresh_settings_camera_options(self, force=False):
         """Probe and refresh camera dropdown options for settings."""
+        now = time.time()
+        if not force and self.cameras and (now - self.camera_scan_last_at) < 30.0:
+            return
+
         detected = self._scan_cameras(probe=True)
         self.cameras = detected
+        self.camera_scan_last_at = now
 
         if not hasattr(self, "camera_dropdown"):
             return
@@ -69,6 +75,8 @@ class UISetupMixin:
 
     def _start_settings_camera_preview(self, camera_idx=None):
         """Start camera preview used only in settings screen."""
+        if len(self.cameras) == 0:
+            self._refresh_settings_camera_options(force=True)
         if len(self.cameras) == 0:
             self._stop_settings_camera_preview()
             return False
@@ -123,8 +131,9 @@ class UISetupMixin:
         self.practice_buttons = {
             "freeplay": Button(cx - 150, 250, 300, 60, "FREE PLAY"),
             "challenge": Button(cx - 150, 330, 300, 60, "CHALLENGE"),
-            "multiplayer": Button(cx - 150, 410, 300, 60, "MULTIPLAYER (LOCKED)", color=(40, 40, 40)),
-            "leaderboard": Button(cx - 150, 490, 300, 50, "LEADERBOARD", color=(218, 165, 32)), # Gold
+            "library": Button(cx - 150, 410, 300, 60, "JUTSU LIBRARY", color=(90, 70, 40)),
+            "multiplayer": Button(cx - 150, 490, 300, 60, "MULTIPLAYER (LOCKED)", color=(40, 40, 40)),
+            "leaderboard": Button(cx - 150, 570, 300, 50, "LEADERBOARD", color=(218, 165, 32)), # Gold
             "back": Button(cx - 100, 620, 200, 50, "BACK"),
         }
 

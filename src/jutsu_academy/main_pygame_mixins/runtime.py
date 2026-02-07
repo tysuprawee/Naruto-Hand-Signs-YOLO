@@ -80,7 +80,10 @@ class RuntimeMixin:
                     elif self.state in [GameState.SETTINGS, GameState.ABOUT, GameState.PRACTICE_SELECT, GameState.JUTSU_LIBRARY]:
                         if self.state == GameState.SETTINGS:
                             self._stop_settings_camera_preview()
-                        self.state = GameState.MENU
+                        if self.state == GameState.JUTSU_LIBRARY:
+                            self.state = GameState.PRACTICE_SELECT
+                        else:
+                            self.state = GameState.MENU
                     elif self.state == GameState.LOGIN_MODAL:
                         if not self.login_in_progress:
                             self.state = GameState.MENU
@@ -230,11 +233,9 @@ class RuntimeMixin:
                         else:
                             self.state = GameState.PRACTICE_SELECT
                     elif name == "settings":
-                        self._refresh_settings_camera_options()
-                        self._start_settings_camera_preview(self.settings["camera_idx"])
+                        self.settings_preview_enabled = False
+                        self._stop_settings_camera_preview()
                         self.state = GameState.SETTINGS
-                    elif name == "library":
-                        self.state = GameState.JUTSU_LIBRARY
                     elif name == "about":
                         self.state = GameState.ABOUT
                     elif name == "quit":
@@ -280,25 +281,41 @@ class RuntimeMixin:
             
             if self.camera_dropdown.update(mouse_pos, mouse_click, self.play_sound):
                 self.settings["camera_idx"] = self.camera_dropdown.selected_idx
-                self._start_settings_camera_preview(self.camera_dropdown.selected_idx)
+                if self.settings_preview_enabled:
+                    self._start_settings_camera_preview(self.camera_dropdown.selected_idx)
             
-            for name, cb in self.settings_checkboxes.items():
-                 cb.update(mouse_pos, mouse_click, self.play_sound)
+            # Keep these always ON and non-interactive.
+            self.settings_checkboxes["use_mp"].checked = True
+            self.settings_checkboxes["restricted"].checked = True
+            self.settings_checkboxes["debug_hands"].update(mouse_pos, mouse_click, self.play_sound)
             
             for name, btn in self.settings_buttons.items():
                 if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
+                    if name == "preview_toggle":
+                        self.settings_preview_enabled = not self.settings_preview_enabled
+                        if self.settings_preview_enabled:
+                            self._refresh_settings_camera_options(force=False)
+                            self._start_settings_camera_preview(self.settings["camera_idx"])
+                        else:
+                            self._stop_settings_camera_preview()
+                    if name == "scan_cameras":
+                        self._refresh_settings_camera_options(force=True)
+                        self.settings["camera_idx"] = self.camera_dropdown.selected_idx
+                        if self.settings_preview_enabled:
+                            self._start_settings_camera_preview(self.settings["camera_idx"])
                     if name == "back":
                         # Save settings
                         self.settings["music_vol"] = self.settings_sliders["music"].value
                         self.settings["sfx_vol"] = self.settings_sliders["sfx"].value
                         self.settings["camera_idx"] = self.camera_dropdown.selected_idx
                         self.settings["debug_hands"] = self.settings_checkboxes["debug_hands"].checked
-                        self.settings["use_mediapipe_signs"] = self.settings_checkboxes["use_mp"].checked
-                        self.settings["restricted_signs"] = self.settings_checkboxes["restricted"].checked
+                        self.settings["use_mediapipe_signs"] = True
+                        self.settings["restricted_signs"] = True
                         
                         if not self.is_muted:
                             pygame.mixer.music.set_volume(self._effective_music_volume(self.settings["music_vol"]))
                         self.save_settings()
+                        self.settings_preview_enabled = False
                         self._stop_settings_camera_preview()
                         self.state = GameState.MENU
         
@@ -306,9 +323,14 @@ class RuntimeMixin:
             for name, btn in self.practice_buttons.items():
                 if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "freeplay":
-                        self.start_game("practice")
+                        self.library_mode = "freeplay"
+                        self.state = GameState.JUTSU_LIBRARY
                     elif name == "challenge":
-                        self.start_game("challenge")
+                        self.library_mode = "challenge"
+                        self.state = GameState.JUTSU_LIBRARY
+                    elif name == "library":
+                        self.library_mode = "browse"
+                        self.state = GameState.JUTSU_LIBRARY
                     elif name == "multiplayer":
                         self.play_sound("click")
                         print("[*] Multiplayer is currently locked.")
@@ -379,12 +401,37 @@ class RuntimeMixin:
                         self.state = GameState.MENU
 
         elif self.state == GameState.JUTSU_LIBRARY:
+            if mouse_click:
+                for item in getattr(self, "library_item_rects", []):
+                    if item["rect"].collidepoint(mouse_pos):
+                        if self.library_mode == "browse":
+                            self.play_sound("click")
+                            break
+
+                        if not item["unlocked"]:
+                            self.play_sound("click")
+                            req_lv = item["min_level"]
+                            self.show_alert("Skill Locked", f"{item['name']} unlocks at LV.{req_lv}.")
+                            break
+
+                        if item["name"] in self.jutsu_names:
+                            jutsu_idx = self.jutsu_names.index(item["name"])
+                            self.play_sound("click")
+                            mode = "practice" if self.library_mode == "freeplay" else "challenge"
+                            self.start_game(mode, initial_jutsu_idx=jutsu_idx)
+                            break
+
             for name, btn in self.library_buttons.items():
                 if btn.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
                     if name == "back":
-                        self.state = GameState.MENU
+                        self.state = GameState.PRACTICE_SELECT
         
         elif self.state == GameState.PLAYING:
+            if hasattr(self, "playing_back_button"):
+                if self.playing_back_button.update(mouse_pos, mouse_click, mouse_down, self.play_sound):
+                    self.stop_game(return_to_library=True)
+                    return
+
             # Check arrow clicks
             cam_x = (SCREEN_WIDTH - 640) // 2
             cam_y = 110 # Synchronized with render_playing margin

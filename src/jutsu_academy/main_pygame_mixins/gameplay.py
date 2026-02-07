@@ -3,7 +3,7 @@ from src.jutsu_academy.effects import EffectContext
 
 
 class GameplayMixin:
-    def start_game(self, mode):
+    def start_game(self, mode, initial_jutsu_idx=0):
         """Start the game with specified mode."""
         self.game_mode = mode
         self.loading_message = "Initializing..."
@@ -40,8 +40,11 @@ class GameplayMixin:
         self._render_loading()
         pygame.display.flip()
         
-        self.current_jutsu_idx = 0
-        self.sequence = self.jutsu_list[self.jutsu_names[0]]["sequence"]
+        if len(self.jutsu_names) > 0:
+            self.current_jutsu_idx = max(0, min(int(initial_jutsu_idx), len(self.jutsu_names) - 1))
+        else:
+            self.current_jutsu_idx = 0
+        self.sequence = self.jutsu_list[self.jutsu_names[self.current_jutsu_idx]]["sequence"]
         self.current_step = 0
         self.jutsu_active = False
         self.fire_particles.emitting = False
@@ -90,7 +93,7 @@ class GameplayMixin:
         rect = surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + y_offset))
         self.screen.blit(surf, rect)
 
-    def stop_game(self):
+    def stop_game(self, return_to_library=False):
         """Stop the game and return to menu."""
         self._stop_camera()
         self.fire_particles.emitting = False
@@ -101,7 +104,11 @@ class GameplayMixin:
         if self.video_cap:
             self.video_cap.release()
             self.video_cap = None
-        self.state = GameState.MENU
+        if return_to_library:
+            self.library_mode = "freeplay" if self.game_mode == "practice" else "challenge"
+            self.state = GameState.JUTSU_LIBRARY
+        else:
+            self.state = GameState.MENU
 
     def switch_jutsu(self, direction):
         """Switch to next/prev jutsu."""

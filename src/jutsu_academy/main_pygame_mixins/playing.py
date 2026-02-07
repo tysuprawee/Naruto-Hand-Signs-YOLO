@@ -144,6 +144,10 @@ class PlayingMixin:
 
     def render_playing(self, dt):
         """Render game playing state with Challenge Mode support."""
+        if hasattr(self, "playing_back_button"):
+            self.playing_back_button.rect.x = 22
+            self.playing_back_button.rect.y = 18
+
         # 1. Background Logic - Always draw first to clear previous frame
         if hasattr(self, 'bg_image') and self.bg_image:
              if hasattr(self, 'last_screen_w') and self.last_screen_w != SCREEN_WIDTH:
@@ -651,6 +655,9 @@ class PlayingMixin:
         # ESC hint
         hint = self.fonts["body_sm"].render("Press ESC to exit", True, COLORS["text_muted"])
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - 60, SCREEN_HEIGHT - 30))
+
+        if hasattr(self, "playing_back_button"):
+            self.playing_back_button.render(self.screen)
 
     def _render_icon_bar(self, x, y, bar_w):
         """Render the jutsu sequence icon bar with dynamic scaling."""

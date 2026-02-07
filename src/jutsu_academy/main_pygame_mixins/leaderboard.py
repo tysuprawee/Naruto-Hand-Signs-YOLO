@@ -54,10 +54,31 @@ class LeaderboardMixin:
         self.announcements_loading = True
         try:
             data = self.network_manager.get_announcements(limit=5)
-            # Flatten if message is a list to allow multi-page paging
+            # 1) Version check popup (from type='version' rows)
+            version_rows = []
+            if data:
+                version_rows = [e for e in data if e.get("type") == "version" and e.get("is_active", True)]
+            if version_rows:
+                # Data is already ordered by priority/created_at desc in query
+                latest = version_rows[0]
+                remote_version = str(latest.get("version") or "").strip()
+                remote_message = str(latest.get("message") or "A newer version is available.").strip()
+
+                if remote_version and remote_version != APP_VERSION:
+                    if self.version_alert_for_version != remote_version:
+                        self.show_alert(
+                            "Update Available",
+                            f"{remote_message}\nCurrent: v{APP_VERSION} • Latest: v{remote_version}",
+                            "OK",
+                        )
+                        self.version_alert_for_version = remote_version
+
+            # 2) Flatten announcements only for announcement popup
             flat_ann = []
             if data:
                 for entry in data:
+                    if entry.get("type") != "announcement":
+                        continue
                     msg = entry.get("message", "")
                     # handle stringified lists or actual lists
                     if isinstance(msg, str) and msg.startswith("[") and msg.endswith("]"):

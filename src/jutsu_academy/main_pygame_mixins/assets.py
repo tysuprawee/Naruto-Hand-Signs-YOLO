@@ -298,9 +298,19 @@ class AssetsMixin:
             try:
                 with open(settings_path) as f:
                     saved = json.load(f)
-                    self.settings.update(saved)
+                    had_legacy_keys = ("use_mediapipe_signs" in saved) or ("restricted_signs" in saved)
+                    # Keep only persisted user-editable keys.
+                    allowed_keys = {"music_vol", "sfx_vol", "camera_idx", "debug_hands"}
+                    sanitized = {k: v for k, v in saved.items() if k in allowed_keys}
+                    self.settings.update(sanitized)
+                    if had_legacy_keys:
+                        with open(settings_path, "w") as out_f:
+                            json.dump(sanitized, out_f, indent=2)
             except:
                 pass
+        # Force ON at runtime (not persisted in settings JSON).
+        self.settings["use_mediapipe_signs"] = True
+        self.settings["restricted_signs"] = True
 
     def save_settings(self):
         """Save settings to file."""
@@ -308,6 +318,12 @@ class AssetsMixin:
         try:
             settings_path.parent.mkdir(exist_ok=True)
             with open(settings_path, "w") as f:
-                json.dump(self.settings, f, indent=2)
+                persisted = {
+                    "music_vol": self.settings.get("music_vol", 0.5),
+                    "sfx_vol": self.settings.get("sfx_vol", 0.7),
+                    "camera_idx": self.settings.get("camera_idx", 0),
+                    "debug_hands": self.settings.get("debug_hands", False),
+                }
+                json.dump(persisted, f, indent=2)
         except:
             pass

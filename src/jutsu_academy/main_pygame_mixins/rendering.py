@@ -726,16 +726,54 @@ class RenderingMixin:
         controls_title = self.fonts["body"].render("AUDIO • CAMERA • INPUT", True, COLORS["accent"])
         self.screen.blit(controls_title, (left_rect.x + 16, left_rect.y + 12))
 
+        # Robust control layout anchored to panel (avoids overlap on future size tweaks)
+        controls_cx = left_rect.x + left_rect.width // 2
+        controls_top = left_rect.y + 46
+        self.settings_sliders["music"].x = controls_cx - 150
+        self.settings_sliders["music"].y = controls_top + 16
+        self.settings_sliders["sfx"].x = controls_cx - 150
+        self.settings_sliders["sfx"].y = controls_top + 96
+
+        self.camera_dropdown.x = controls_cx - 115
+        self.camera_dropdown.y = controls_top + 186
+        self.camera_dropdown.width = min(280, left_rect.width - 44)
+        self.camera_dropdown.rect = pygame.Rect(
+            self.camera_dropdown.x,
+            self.camera_dropdown.y,
+            self.camera_dropdown.width,
+            self.camera_dropdown.height,
+        )
+
+        cb_y = controls_top + 266
+        for key in ["debug_hands", "use_mp", "restricted"]:
+            cb = self.settings_checkboxes[key]
+            cb.rect.x = controls_cx - 150
+            cb.rect.y = cb_y
+            cb_y += 40
+
+        scan_btn = self.settings_buttons["scan_cameras"]
+        scan_btn.rect.width = 120
+        scan_btn.rect.height = 32
+        scan_btn.rect.x = self.camera_dropdown.rect.right - scan_btn.rect.width
+        scan_btn.rect.y = self.camera_dropdown.rect.y + self.camera_dropdown.rect.height + 8
+        scan_btn.text = "SCAN"
+        scan_btn.color = COLORS["bg_card"]
+
+        back_btn = self.settings_buttons["back"]
+        back_btn.rect.width = min(250, left_rect.width - 80)
+        back_btn.rect.x = controls_cx - back_btn.rect.width // 2
+        back_btn.rect.y = left_rect.bottom - 72
+
         # Sliders
         for slider in self.settings_sliders.values():
             slider.render(self.screen)
         
         # Camera dropdown label
         cam_label = self.fonts["body_sm"].render("Camera:", True, COLORS["text"])
-        self.screen.blit(cam_label, (left_rect.x + 16, 380))
+        self.screen.blit(cam_label, (left_rect.x + 16, self.camera_dropdown.y + 6))
         if len(self.cameras) == 0:
-            no_cam = self.fonts["tiny"].render("No cameras detected", True, COLORS["error"])
-            self.screen.blit(no_cam, (left_rect.x + 140, 386))
+            no_cam = self.fonts["tiny"].render("No camera cached yet (enable preview to detect)", True, COLORS["error"])
+            self.screen.blit(no_cam, (left_rect.x + 140, self.camera_dropdown.y + 12))
         
         # Checkboxes
         for cb in self.settings_checkboxes.values():
@@ -749,8 +787,20 @@ class RenderingMixin:
         pygame.draw.rect(self.screen, (12, 12, 16), preview_rect, border_radius=10)
         pygame.draw.rect(self.screen, COLORS["border"], preview_rect, 1, border_radius=10)
 
+        preview_btn = self.settings_buttons["preview_toggle"]
+        preview_btn.rect.width = min(220, preview_rect.width - 40)
+        preview_btn.rect.height = 42
+        preview_btn.rect.x = preview_rect.centerx - preview_btn.rect.width // 2
+        preview_btn.rect.y = preview_rect.bottom - preview_btn.rect.height - 14
+        if self.settings_preview_enabled:
+            preview_btn.text = "DISABLE PREVIEW"
+            preview_btn.color = COLORS["error"]
+        else:
+            preview_btn.text = "ENABLE PREVIEW"
+            preview_btn.color = COLORS["bg_card"]
+
         preview_surface = self._get_settings_preview_surface()
-        if preview_surface is not None:
+        if self.settings_preview_enabled and preview_surface is not None:
             sw, sh = preview_surface.get_size()
             fit_scale = min(preview_rect.width / max(1, sw), preview_rect.height / max(1, sh))
             fit_w = max(1, int(sw * fit_scale))
@@ -763,8 +813,9 @@ class RenderingMixin:
             self.screen.blit(fitted, (dx, dy))
             self.screen.set_clip(prev_clip)
         else:
-            no_cam = self.fonts["body_sm"].render("Preview unavailable", True, COLORS["text_dim"])
-            self.screen.blit(no_cam, no_cam.get_rect(center=preview_rect.center))
+            status = "Preview off (click ENABLE PREVIEW)" if not self.settings_preview_enabled else "Preview unavailable"
+            no_cam = self.fonts["body_sm"].render(status, True, COLORS["text_dim"])
+            self.screen.blit(no_cam, no_cam.get_rect(center=(preview_rect.centerx, preview_rect.centery - 24)))
 
         hint = self.fonts["tiny"].render("Camera opens only in Settings preview and in active game.", True, COLORS["text_muted"])
         self.screen.blit(hint, (right_rect.x + 14, right_rect.bottom - 24))
@@ -807,17 +858,48 @@ class RenderingMixin:
         descriptions = {
             "freeplay": "Practice any jutsu at your own pace",
             "challenge": "Complete jutsus as fast as possible",
+            "library": "Browse lock/unlock tiers and sign sequences",
             "multiplayer": "PvP Battles (Coming Soon)",
             "leaderboard": "View the rankings of the greatest Shinobi"
         }
-        
+
+        # Robust layout: avoid overlap regardless of text sizes
+        primary_order = ["freeplay", "challenge", "library", "multiplayer", "leaderboard"]
+        btn_w, btn_h = 300, 50
+        desc_gap = 4
+
+        if "back" in self.practice_buttons:
+            back_btn = self.practice_buttons["back"]
+            back_btn.rect.width = 220
+            back_btn.rect.height = 50
+            back_btn.rect.x = panel_x + (panel_w - back_btn.rect.width) // 2
+            back_btn.rect.y = panel_y + panel_h - back_btn.rect.height - 22
+
+        layout_top = title_rect.bottom + 28
+        layout_bottom = self.practice_buttons["back"].rect.y - 16
+        row_count = max(1, len([n for n in primary_order if n in self.practice_buttons]))
+        row_step = max(70, (layout_bottom - layout_top) // row_count)
+        start_y = layout_top
+
+        for i, name in enumerate(primary_order):
+            if name not in self.practice_buttons:
+                continue
+            btn = self.practice_buttons[name]
+            btn.rect.width = btn_w
+            btn.rect.height = btn_h
+            btn.rect.x = panel_x + (panel_w - btn_w) // 2
+            btn.rect.y = start_y + i * row_step
+
         for name, btn in self.practice_buttons.items():
             btn.render(self.screen)
             if name in descriptions:
                 # Use small font to fit
                 desc = self.fonts["small"].render(descriptions[name], True, (180, 180, 190))
-                desc_rect = desc.get_rect(midtop=(btn.rect.centerx, btn.rect.bottom + 5))
-                self.screen.blit(desc, desc_rect)
+                desc_rect = desc.get_rect(midtop=(btn.rect.centerx, btn.rect.bottom + desc_gap))
+                # Guard: don't draw descriptions into back button region
+                back_top = self.practice_buttons["back"].rect.y
+                if desc_rect.bottom < back_top - 6:
+                    self.screen.blit(desc, desc_rect)
 
     def render_about(self):
         """Render about/specs page."""
@@ -985,6 +1067,7 @@ class RenderingMixin:
 
     def render_jutsu_library(self):
         """Render tiered jutsu library page with lock/unlock status."""
+        self.library_item_rects = []
         if self.bg_image:
             self.screen.blit(self.bg_image, (0, 0))
         else:
@@ -997,7 +1080,13 @@ class RenderingMixin:
         title = self.fonts["title_md"].render("JUTSU LIBRARY", True, COLORS["accent"])
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 70)))
 
-        subtitle = self.fonts["body_sm"].render("Tiered unlock progression by level", True, COLORS["text_dim"])
+        if self.library_mode == "freeplay":
+            subtitle_text = "Select an unlocked jutsu to start Free Play"
+        elif self.library_mode == "challenge":
+            subtitle_text = "Select an unlocked jutsu to start Challenge Mode"
+        else:
+            subtitle_text = "Browse only: view lock/unlock progression"
+        subtitle = self.fonts["body_sm"].render(subtitle_text, True, COLORS["text_dim"])
         self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 108)))
 
         tier_defs = [
@@ -1049,12 +1138,16 @@ class RenderingMixin:
                 req_lv = jutsu_data.get("min_level", 0)
                 unlocked = self.progression.level >= req_lv
                 card_rect = pygame.Rect(x, row_y, card_w, card_h)
+                hoverable = self.library_mode in ["freeplay", "challenge"]
+                hovered = hoverable and card_rect.collidepoint(pygame.mouse.get_pos())
 
                 if unlocked:
                     fill = (35, 52, 42, 230)
                     border = COLORS["success"]
                     status = "UNLOCKED"
                     status_color = COLORS["success"]
+                    if hovered:
+                        fill = (45, 70, 56, 235)
                 else:
                     fill = (40, 40, 50, 220)
                     border = COLORS["border"]
@@ -1076,12 +1169,25 @@ class RenderingMixin:
                 seq_surf = self.fonts["tiny"].render(f"SIGNS: {seq_len}", True, COLORS["text_dim"])
                 self.screen.blit(seq_surf, (card_rect.x + 10, card_rect.y + 54))
 
+                self.library_item_rects.append({
+                    "rect": card_rect,
+                    "name": jutsu_name,
+                    "unlocked": unlocked,
+                    "min_level": req_lv,
+                })
+
         hint = self.fonts["body_sm"].render(
             f"YOUR LEVEL: {self.progression.level} • RANK: {self.progression.rank}",
             True,
             COLORS["text"],
         )
-        self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 56)))
+        self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 70)))
+
+        if self.library_mode == "browse":
+            mode_hint = self.fonts["tiny"].render("Browse mode: card selection is disabled.", True, COLORS["text_dim"])
+        else:
+            mode_hint = self.fonts["tiny"].render("Click an unlocked jutsu card to continue.", True, COLORS["text_dim"])
+        self.screen.blit(mode_hint, mode_hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 46)))
 
         for btn in self.library_buttons.values():
             btn.render(self.screen)

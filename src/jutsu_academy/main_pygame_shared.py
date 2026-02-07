@@ -402,6 +402,9 @@ class Dropdown:
         self.open_upward = space_below < total_h and space_above > space_below
     
     def update(self, mouse_pos, mouse_click, play_sound=None):
+        if not self.options:
+            self.is_open = False
+            return False
         if mouse_click:
             if self.is_open:
                 # Check if clicked on an option
@@ -433,7 +436,14 @@ class Dropdown:
         
         # Selected text
         if self.options:
-            text = self.font.render(self.options[self.selected_idx], True, COLORS["text"])
+            selected = self.options[self.selected_idx]
+            max_w = self.width - 52
+            while self.font.size(selected)[0] > max_w and len(selected) > 1:
+                selected = selected[:-2].rstrip() + "…"
+            text = self.font.render(selected, True, COLORS["text"])
+            surface.blit(text, (self.x + 15, self.y + 10))
+        else:
+            text = self.font.render("No camera", True, COLORS["text_dim"])
             surface.blit(text, (self.x + 15, self.y + 10))
         
         # Arrow icon
@@ -457,7 +467,11 @@ class Dropdown:
                 pygame.draw.rect(surface, color, opt_rect)
                 pygame.draw.rect(surface, COLORS["border"], opt_rect, 1)
                 
-                text = self.font.render(opt, True, COLORS["text"])
+                label = opt
+                max_w = self.width - 22
+                while self.font.size(label)[0] > max_w and len(label) > 1:
+                    label = label[:-2].rstrip() + "…"
+                text = self.font.render(label, True, COLORS["text"])
                 surface.blit(text, (self.x + 15, opt_rect.y + 10))
 
 class Checkbox:
