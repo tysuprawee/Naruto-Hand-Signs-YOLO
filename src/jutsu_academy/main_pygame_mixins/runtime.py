@@ -132,6 +132,10 @@ class RuntimeMixin:
                     self.about_scroll_y -= event.y * 30
                     if self.about_scroll_y < 0:
                         self.about_scroll_y = 0
+                elif self.state == GameState.PRACTICE_SELECT:
+                    self.practice_scroll_y -= event.y * 36
+                    if self.practice_scroll_y < 0:
+                        self.practice_scroll_y = 0
         
         # ✅ IMPORTANT: read mouse state AFTER event processing
         mouse_pos = pygame.mouse.get_pos()

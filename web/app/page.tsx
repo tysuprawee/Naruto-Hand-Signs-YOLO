@@ -4,11 +4,13 @@ import { Sword, Scroll, ArrowRight, Video, Trophy, UploadCloud, Youtube, Instagr
 export default function Home() {
   return (
     <div className="min-h-screen bg-ninja-bg text-ninja-text font-sans selection:bg-ninja-accent selection:text-white">
-      {/* Heavy Grid Background Effect */}
-      <div className="fixed inset-0 z-0 pointer-events-none opacity-[0.03]"
+      {/* Background Image */}
+      <div className="fixed inset-0 z-0 pointer-events-none opacity-20"
         style={{
-          backgroundImage: `linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px)`,
-          backgroundSize: '40px 40px'
+          backgroundImage: "url('/village.jpg')",
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          filter: 'grayscale(100%) contrast(120%)' // Stylized look
         }}
       ></div>
 
@@ -16,14 +18,14 @@ export default function Home() {
       <header className="fixed top-0 w-full z-50 bg-ninja-bg/80 backdrop-blur-md border-b border-ninja-border">
         <div className="container mx-auto flex h-16 items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 bg-ninja-accent text-white flex items-center justify-center font-bold rounded-md shadow-[0_0_15px_rgba(255,120,50,0.5)]">
-              忍
+            <div className="h-10 w-10 relative">
+              <img src="/logo2.png" alt="Shinobi Academy" className="object-contain w-full h-full" />
             </div>
-            <span className="font-bold tracking-tight text-lg text-white">JUTSU ACADEMY</span>
+            <span className="font-bold tracking-tight text-lg text-white">SHINOBI ACADEMY</span>
           </div>
           <nav className="hidden md:flex gap-8 text-sm font-medium text-ninja-dim">
             <Link href="#features" className="hover:text-ninja-accent transition-colors">Features</Link>
-            <Link href="#dev" className="hover:text-ninja-accent transition-colors">Sensei</Link>
+            <Link href="#dev" className="hover:text-ninja-accent transition-colors">Dev</Link>
             <Link href="/leaderboard" className="flex items-center gap-2 text-ninja-accent font-bold hover:text-ninja-accent-glow transition-colors">
               <Trophy className="w-4 h-4" />
               Leaderboard
@@ -58,7 +60,7 @@ export default function Home() {
                 href="/play"
                 className="group h-14 px-8 bg-ninja-accent hover:bg-ninja-accent-glow text-white text-lg font-bold rounded-lg flex items-center gap-3 transition-all shadow-[0_0_20px_rgba(255,120,50,0.3)] hover:shadow-[0_0_30px_rgba(255,120,50,0.5)] hover:-translate-y-1"
               >
-                ENTER DOJO
+                PLAY NOW
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
 
@@ -83,21 +85,23 @@ export default function Home() {
           </div>
 
           {/* Hero Visual */}
-          <div className="flex-1 relative">
-            <div className="absolute inset-0 bg-ninja-accent/20 blur-[100px] rounded-full opacity-50"></div>
-            <div className="relative bg-ninja-panel border border-ninja-border rounded-2xl p-2 shadow-2xl rotate-3 hover:rotate-0 transition-all duration-500">
-              <div className="aspect-video bg-black rounded-xl overflow-hidden relative group">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-center space-y-4">
-                    <div className="w-20 h-20 bg-ninja-accent/20 rounded-full flex items-center justify-center mx-auto border border-ninja-accent/50">
-                      <Video className="w-8 h-8 text-ninja-accent" />
-                    </div>
-                    <p className="font-bold text-ninja-dim">LIVE WEBCAM PREVIEW</p>
-                  </div>
-                </div>
-                {/* Scanline effect */}
-                <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[length:100%_4px] pointer-events-none opacity-20"></div>
-              </div>
+          {/* Hero Visual */}
+          <div className="flex-1 relative flex flex-col justify-center items-center perspective-container">
+            <div className="absolute inset-0 bg-ninja-accent/20 blur-[150px] rounded-full opacity-40"></div>
+
+            <div className="relative w-full max-w-[800px] aspect-square flex items-center justify-center p-0 animate-float-3d">
+              <img
+                src="/logo2.png"
+                alt="Shinobi Academy Emblem"
+                className="w-full h-full object-contain"
+              />
+            </div>
+
+            <div className="mt-8 text-center animate-pulse z-10 bg-black/50 backdrop-blur-sm px-8 py-4 rounded-xl border border-ninja-accent/30 shadow-[0_0_30px_rgba(255,120,50,0.2)]">
+              <span className="block text-ninja-accent font-black tracking-[0.5em] text-sm mb-2 uppercase">Global Launch</span>
+              <span className="text-4xl md:text-6xl font-black text-white tracking-tighter drop-shadow-[0_0_15px_rgba(255,120,50,0.8)]">
+                FEBRUARY <span className="text-ninja-accent">21</span>
+              </span>
             </div>
           </div>
         </section>
@@ -130,12 +134,18 @@ export default function Home() {
             <div className="space-y-6 text-center md:text-left">
               <h2 className="text-3xl font-black text-white flex items-center justify-center md:justify-start gap-3">
                 <Scroll className="w-8 h-8 text-ninja-accent" />
-                MESSAGE FROM SENSEI
+                DEV
               </h2>
-              <p className="text-lg text-ninja-dim max-w-2xl leading-relaxed">
-                "I built the Jutsu Academy to prove that advanced AI can be fun, accessible, and private.
-                Join thousands of other ninjas, master the signs, and contribute to the open-source dataset
-                to help the model learn even more distinctive styles!"
+              <p className="text-lg text-ninja-dim max-w-2xl leading-relaxed space-y-4">
+                <span className="block">
+                  "I built the Shinobi Academy as a <strong>non-profit fan project</strong> to prove that advanced AI can be fun, accessible, and private.
+                </span>
+                <span className="block text-sm opacity-70 italic">
+                  Disclaimer: This project is not affiliated with, endorsed, sponsored, or specifically approved by Masashi Kishimoto, Shueisha, Viz Media, or the Naruto franchise. All original character names and designs are the property of their respective owners.
+                </span>
+                <span className="block mt-4">
+                  The game launches on <span className="text-white font-bold">February 21st</span>. Get ready to master the signs!"
+                </span>
               </p>
 
               <div className="flex flex-wrap justify-center md:justify-start gap-4">
@@ -159,7 +169,7 @@ export default function Home() {
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
             <span className="font-mono">SYSTEM OPERATIONAL</span>
           </div>
-          <p>&copy; 2026 Jutsu Academy. Built with PyTorch & ONNX.</p>
+          <p>&copy; 2026 Shinobi Academy. Built with PyTorch & ONNX.</p>
         </div>
       </footer>
     </div>

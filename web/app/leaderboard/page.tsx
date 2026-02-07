@@ -68,10 +68,10 @@ export default function LeaderboardPage() {
             <header className="fixed top-0 w-full z-50 bg-ninja-bg/80 backdrop-blur-md border-b border-ninja-border">
                 <div className="container mx-auto flex h-16 items-center justify-between px-6">
                     <Link href="/" className="flex items-center gap-3 hover:opacity-70 transition-opacity">
-                        <div className="h-9 w-9 bg-ninja-accent text-white flex items-center justify-center font-bold rounded-md shadow-[0_0_15px_rgba(255,120,50,0.5)]">
-                            忍
+                        <div className="h-10 w-10 relative">
+                            <img src="/logo2.png" alt="Shinobi Academy" className="object-contain w-full h-full" />
                         </div>
-                        <span className="font-bold tracking-tight text-lg text-white">NINJA ACADEMY</span>
+                        <span className="font-bold tracking-tight text-lg text-white">SHINOBI ACADEMY</span>
                     </Link>
                     <nav className="flex gap-4">
                         <Link href="/" className="text-sm font-medium text-ninja-dim hover:text-white flex items-center gap-1">

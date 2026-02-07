@@ -237,6 +237,7 @@ class CoreMixin:
         self.state = GameState.MENU
         self.prev_state = None
         self.about_scroll_y = 0  # Scroll position for About page
+        self.practice_scroll_y = 0
         self.library_mode = "browse"  # browse | freeplay | challenge
         self.library_item_rects = []
         

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ninja Academy | AI Jutsu Trainer",
+  title: "Shinobi Academy | AI Jutsu Trainer",
   description: "Learn Naruto hand signs using real-time AI computer vision.",
 };
 

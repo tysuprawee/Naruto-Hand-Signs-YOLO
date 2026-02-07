@@ -829,8 +829,7 @@ class RenderingMixin:
         self.camera_dropdown.render(self.screen)
 
     def render_practice_select(self):
-        """Render practice mode selection with enhanced styling."""
-        # 1. Background Logic
+        """Render practice mode selection in grouped 'Select Your Path' style."""
         if self.bg_image:
              bg = pygame.transform.smoothscale(self.bg_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
              self.screen.blit(bg, (0, 0))
@@ -842,66 +841,104 @@ class RenderingMixin:
         overlay.fill((0, 0, 0, 210))
         self.screen.blit(overlay, (0, 0))
 
-        # 2. Main Panel
-        panel_w, panel_h = 560, 650
+        panel_w, panel_h = 740, 680
         panel_x = (SCREEN_WIDTH - panel_w) // 2
         panel_y = (SCREEN_HEIGHT - panel_h) // 2
-        
         panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
-        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=20)
-        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=20)
-        
-        # Title
-        title = self.fonts["title_md"].render("SELECT MODE", True, COLORS["accent"])
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, panel_y + 60))
-        self.screen.blit(title, title_rect)
-        
-        descriptions = {
-            "freeplay": "Practice any jutsu at your own pace",
-            "challenge": "Complete jutsus as fast as possible",
-            "library": "Browse lock/unlock tiers and sign sequences",
-            "multiplayer": "PvP Battles (Coming Soon)",
-            "quests": "Claim daily and weekly XP rewards",
-            "leaderboard": "View the rankings of the greatest Shinobi"
-        }
+        pygame.draw.rect(self.screen, COLORS["bg_panel"], panel_rect, border_radius=22)
+        pygame.draw.rect(self.screen, COLORS["border"], panel_rect, 2, border_radius=22)
 
-        # Robust layout: avoid overlap regardless of text sizes
-        primary_order = ["freeplay", "challenge", "library", "multiplayer", "quests", "leaderboard"]
-        btn_w, btn_h = 300, 50
-        desc_gap = 4
+        title = self.fonts["title_md"].render("SELECT YOUR PATH", True, COLORS["accent"])
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, panel_y + 52)))
+        sub = self.fonts["body"].render("Choose how you want to train today.", True, COLORS["text"])
+        self.screen.blit(sub, sub.get_rect(center=(SCREEN_WIDTH // 2, panel_y + 96)))
 
-        if "back" in self.practice_buttons:
-            back_btn = self.practice_buttons["back"]
-            back_btn.rect.width = 220
-            back_btn.rect.height = 50
-            back_btn.rect.x = panel_x + (panel_w - back_btn.rect.width) // 2
-            back_btn.rect.y = panel_y + panel_h - back_btn.rect.height - 22
+        mouse_pos = pygame.mouse.get_pos()
 
-        layout_top = title_rect.bottom + 28
-        layout_bottom = self.practice_buttons["back"].rect.y - 16
-        row_count = max(1, len([n for n in primary_order if n in self.practice_buttons]))
-        row_step = max(70, (layout_bottom - layout_top) // row_count)
-        start_y = layout_top
+        # Fixed bottom button
+        back_btn = self.practice_buttons["back"]
+        back_btn.rect.width = 280
+        back_btn.rect.height = 52
+        back_btn.rect.x = panel_x + (panel_w - back_btn.rect.width) // 2
+        back_btn.rect.y = panel_rect.bottom - 62
+        back_btn.text = "BACK TO VILLAGE"
 
-        for i, name in enumerate(primary_order):
-            if name not in self.practice_buttons:
-                continue
+        # Scrollable viewport for cards/sections
+        content_area = pygame.Rect(panel_x + 16, panel_y + 122, panel_w - 32, back_btn.rect.y - (panel_y + 122) - 10)
+
+        def draw_section_header(text, local_y):
+            y = content_area.y + local_y - self.practice_scroll_y
+            bar = pygame.Rect(panel_x + 20, y, panel_w - 40, 28)
+            pygame.draw.rect(self.screen, (52, 44, 36, 210), bar, border_radius=10)
+            pygame.draw.rect(self.screen, COLORS["border"], bar, 1, border_radius=10)
+            t = self.fonts["body"].render(text, True, (228, 192, 150))
+            self.screen.blit(t, t.get_rect(center=bar.center))
+
+        def draw_mode_card(name, title_text, desc_text, base_color, local_y, h=74):
             btn = self.practice_buttons[name]
-            btn.rect.width = btn_w
-            btn.rect.height = btn_h
-            btn.rect.x = panel_x + (panel_w - btn_w) // 2
-            btn.rect.y = start_y + i * row_step
+            btn.rect = pygame.Rect(content_area.x + 27, content_area.y + local_y - self.practice_scroll_y, content_area.width - 54, h)
+            hovered = btn.rect.collidepoint(mouse_pos) and btn.enabled
+            card = pygame.Surface((btn.rect.width, btn.rect.height), pygame.SRCALPHA)
+            card.fill((0, 0, 0, 0))
+            pygame.draw.rect(card, base_color, card.get_rect(), border_radius=14)
+            border = COLORS["accent_glow"] if hovered else (30, 25, 20)
+            pygame.draw.rect(card, border, card.get_rect(), 2, border_radius=14)
+            gloss = pygame.Surface((btn.rect.width, max(1, btn.rect.height // 2)), pygame.SRCALPHA)
+            gloss.fill((255, 255, 255, 18 if hovered else 10))
+            card.blit(gloss, (0, 0))
+            self.screen.blit(card, btn.rect.topleft)
 
-        for name, btn in self.practice_buttons.items():
-            btn.render(self.screen)
-            if name in descriptions:
-                # Use small font to fit
-                desc = self.fonts["small"].render(descriptions[name], True, (180, 180, 190))
-                desc_rect = desc.get_rect(midtop=(btn.rect.centerx, btn.rect.bottom + desc_gap))
-                # Guard: don't draw descriptions into back button region
-                back_top = self.practice_buttons["back"].rect.y
-                if desc_rect.bottom < back_top - 6:
-                    self.screen.blit(desc, desc_rect)
+            name_col = (245, 225, 185) if btn.enabled else (170, 170, 180)
+            desc_col = COLORS["text"] if btn.enabled else COLORS["text_dim"]
+            n = self.fonts["title_sm"].render(title_text, True, name_col)
+            d = self.fonts["body"].render(desc_text, True, desc_col)
+            self.screen.blit(n, (btn.rect.x + 18, btn.rect.y + 6))
+            self.screen.blit(d, (btn.rect.x + 18, btn.rect.y + 40))
+
+            arrow = self.fonts["title_sm"].render(">", True, name_col)
+            self.screen.blit(arrow, arrow.get_rect(center=(btn.rect.right - 22, btn.rect.centery)))
+
+        # Content layout in local coordinates (inside scroll area)
+        y0 = 0
+
+        # Clamp scroll range
+        content_total_h = y0 + 532 + 66 + 18
+        max_scroll = max(0, content_total_h - content_area.height)
+        if self.practice_scroll_y > max_scroll:
+            self.practice_scroll_y = max_scroll
+        if self.practice_scroll_y < 0:
+            self.practice_scroll_y = 0
+
+        soon = self.fonts["body_sm"].render("Coming Soon...", True, COLORS["text_dim"])
+
+        # Clip cards to scroll area
+        pygame.draw.rect(self.screen, COLORS["border"], content_area, 1, border_radius=8)
+        prev_clip = self.screen.get_clip()
+        self.screen.set_clip(content_area)
+        # redraw within clip (simple second pass for clean clipping)
+        draw_section_header("MAIN MODES", y0)
+        draw_mode_card("freeplay", "FREE PLAY", "Practice any jutsu at your own pace", (140, 64, 28, 235), y0 + 34)
+        draw_mode_card("challenge", "CHALLENGE", "Beat the clock and chain combos", (145, 58, 22, 235), y0 + 120)
+        draw_section_header("LIBRARY & PROGRESSION", y0 + 206)
+        draw_mode_card("library", "JUTSU LIBRARY", "View signs, unlocks, and tutorials", (44, 70, 112, 235), y0 + 240)
+        draw_mode_card("quests", "QUEST BOARD", "Daily & weekly missions for bonus XP", (70, 86, 48, 235), y0 + 326)
+        draw_mode_card("leaderboard", "LEADERBOARD", "View the rankings of the greatest Shinobi", (130, 100, 24, 235), y0 + 412)
+        draw_section_header("COMING SOON", y0 + 498)
+        draw_mode_card("multiplayer", "MULTIPLAYER (PVP BATTLES)", "Train hard. Arena opens soon...", (64, 66, 84, 220), y0 + 532, h=66)
+        mp = self.practice_buttons["multiplayer"].rect
+        self.screen.blit(soon, (mp.right - soon.get_width() - 18, mp.y + 24))
+        self.screen.set_clip(prev_clip)
+
+        # Scrollbar
+        if max_scroll > 0:
+            track = pygame.Rect(content_area.right - 8, content_area.y + 8, 5, content_area.height - 16)
+            pygame.draw.rect(self.screen, (60, 60, 75), track, border_radius=3)
+            thumb_h = max(30, int(track.height * (content_area.height / max(1, content_total_h))))
+            thumb_y = track.y + int((track.height - thumb_h) * (self.practice_scroll_y / max_scroll))
+            pygame.draw.rect(self.screen, (170, 170, 190), (track.x, thumb_y, track.width, thumb_h), border_radius=3)
+
+        # Render interactive buttons last for proper hover/press behavior visuals
+        self.practice_buttons["back"].render(self.screen)
 
     def render_about(self):
         """Render upgraded About page."""
@@ -1213,16 +1250,17 @@ class RenderingMixin:
             stat_s = self.fonts["tiny"].render(f"{min(progress, target)}/{target}", True, COLORS["text_dim"])
             self.screen.blit(stat_s, (rect.right - 62, rect.y + 14))
 
-            track = pygame.Rect(rect.x + 12, rect.y + 42, rect.width - 140, 16)
+            claim_rect = pygame.Rect(rect.right - 108, rect.y + 36, 92, 30)
+            reward_x = claim_rect.x - 66
+            track = pygame.Rect(rect.x + 12, rect.y + 42, reward_x - (rect.x + 12) - 8, 16)
             pygame.draw.rect(self.screen, (50, 50, 64), track, border_radius=8)
             if pct > 0:
                 fill = pygame.Rect(track.x, track.y, int(track.width * pct), track.height)
                 pygame.draw.rect(self.screen, COLORS["accent"], fill, border_radius=8)
 
             reward_txt = self.fonts["tiny"].render(f"+{reward} XP", True, COLORS["accent_glow"])
-            self.screen.blit(reward_txt, (track.right + 10, track.y + 1))
+            self.screen.blit(reward_txt, (reward_x, track.y + 1))
 
-            claim_rect = pygame.Rect(rect.right - 108, rect.y + 36, 92, 30)
             ready = (progress >= target) and (not claimed)
             if claimed:
                 pygame.draw.rect(self.screen, (60, 80, 65), claim_rect, border_radius=8)
