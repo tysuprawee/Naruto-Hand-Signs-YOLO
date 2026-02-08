@@ -1,6 +1,8 @@
-# Jutsu Academy (v1.1.0 "Shadow Clone" Update)
+# Shinobi Academy / Naruto Hand Signs
 
-A complete Python project for training and running a YOLO model to recognize Naruto hand signs from a webcam, now featuring a full game loop with progression, quests, and advanced visual effects.
+A full-stack project for Naruto hand-sign recognition and gameplay:
+- A Python game/training stack (MediaPipe + KNN, legacy YOLO tools, Pygame academy flow)
+- A Next.js web frontend (`web/`) for landing page, leaderboard, and release UI
 
 ## 🎯 Overview
 
@@ -9,6 +11,17 @@ This project allows you to:
 2. **Master** complex 2-handed jutsu sequences.
 3. **Progress** your Shinobi Rank (Academy Student → Hokage) via **Quests** and **Mastery**.
 4. **Inclusive Detection**: Experience a model that works for **every skin tone** using MediaPipe integration.
+
+### Web Frontend (`web/`)
+- Built with **Next.js 16** + Tailwind
+- Hero page with:
+  - Live **Release Countdown** to **Feb 21, 9:00 PM** (local browser time)
+  - Responsive launch/countdown badge
+  - Locked **DOWNLOAD** CTA until release
+- Routes:
+  - `/` landing page
+  - `/leaderboard` leaderboard UI
+  - `/play` currently redirects home
 
 | (OLD) YOLO Detection | Jutsu Academy (NEW) |
 |:---:|:---:|
@@ -73,7 +86,23 @@ The project is organized into modular systems to handle the game, the AI, and th
 
 ## 🚀 Getting Started
 
-### 1. Create a Virtual Environment
+### A) Web App (Next.js)
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Production build:
+```bash
+cd web
+npm run build
+```
+
+### B) Python App
+
+#### 1. Create a Virtual Environment
 
 **Windows:**
 ```bash
@@ -87,13 +116,13 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 2. Install Dependencies
+#### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the Academy
+#### 3. Run the Academy
 
 The main game is now launched via `main_pygame.py`:
 
@@ -105,7 +134,7 @@ python src/jutsu_academy/main_pygame.py
 python src/jutsu_academy/shadow_clones.py
 ```
 
-### 4. (Optional) Run Visualization Trainer
+#### 4. (Optional) Run Visualization Trainer
 For the legacy interactive trainer mode:
 ```bash
 python src/jutsu_trainer.py
@@ -124,6 +153,15 @@ To change the hand sign classes:
 ---
 
 ## 🐛 Troubleshooting
+
+**Vercel shows `404: NOT_FOUND`:**
+- In Vercel Project Settings, set **Root Directory** to `web`
+- Do **not** use legacy root rewrites for `/web/...`
+- Keep deployment config simple (no root `vercel.json` route rewrites)
+
+**Vercel prerender/build error `supabaseUrl is required`:**
+- Ensure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set in Vercel environment variables
+- The current web code guards missing envs, but leaderboard data requires them to function
 
 **SDL Library Conflict (Mac/Linux):**
 If you see errors related to `libSDL2` conflicts between `cv2` and `pygame`:
