@@ -86,23 +86,24 @@ html[data-force-pointer="true"] * {
 }
 
 .animate-float-3d {
-  animation: float-3d 8s ease-in-out infinite;
+  animation: float-3d 6s ease-in-out infinite;
   transform-style: preserve-3d;
+  will-change: transform, filter;
 }
 
 @keyframes float-3d {
   0% {
-    transform: translateY(0) rotateX(10deg) rotateY(-15deg) scale(1);
+    transform: translateY(0) rotateX(14deg) rotateY(-20deg) scale(1);
     filter: drop-shadow(-20px 20px 30px rgba(0, 0, 0, 0.5));
   }
 
   50% {
-    transform: translateY(-30px) rotateX(-5deg) rotateY(15deg) scale(1.05);
+    transform: translateY(-30px) rotateX(-8deg) rotateY(20deg) scale(1.07);
     filter: drop-shadow(20px 50px 50px rgba(0, 0, 0, 0.5));
   }
 
   100% {
-    transform: translateY(0) rotateX(10deg) rotateY(-15deg) scale(1);
+    transform: translateY(0) rotateX(14deg) rotateY(-20deg) scale(1);
     filter: drop-shadow(-20px 20px 30px rgba(0, 0, 0, 0.5));
   }
 }

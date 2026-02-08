@@ -1,7 +1,25 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Sword, Scroll, ArrowRight, Video, Trophy, UploadCloud, Youtube, Instagram, Shield, Info } from "lucide-react";
 
 export default function Home() {
+  const targetDate = useMemo(() => new Date(2026, 1, 21, 21, 0, 0), []);
+  const [timeLeft, setTimeLeft] = useState(() => getTimeLeft(targetDate));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTimeLeft(getTimeLeft(targetDate));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [targetDate]);
+
+  const countdownLabel = timeLeft.expired
+    ? "LIVE NOW"
+    : `${pad(timeLeft.days)}D ${pad(timeLeft.hours)}H ${pad(timeLeft.minutes)}M ${pad(timeLeft.seconds)}S`;
+
   return (
     <div className="min-h-screen bg-ninja-bg text-ninja-text font-sans selection:bg-ninja-accent selection:text-white">
       {/* Background Image */}
@@ -42,15 +60,17 @@ export default function Home() {
             {/* Badges Container */}
             <div className="flex flex-col items-start gap-4">
               {/* Global Launch Date Pill */}
-              <div className="inline-flex items-center gap-4 px-8 py-4 rounded-full border-2 border-ninja-accent/80 bg-ninja-accent/10 backdrop-blur-xl shadow-[0_0_40px_rgba(255,120,50,0.4)] hover:shadow-[0_0_60px_rgba(255,120,50,0.6)] transition-shadow duration-500">
-                <span className="flex h-4 w-4 relative">
+              <div className="inline-flex w-full max-w-[42rem] flex-col gap-2 px-4 py-3 rounded-2xl border-2 border-ninja-accent/80 bg-ninja-accent/10 backdrop-blur-xl shadow-[0_0_40px_rgba(255,120,50,0.4)] transition-shadow duration-500 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:px-6 sm:py-4 sm:rounded-full hover:shadow-[0_0_60px_rgba(255,120,50,0.6)]">
+                <span className="flex h-4 w-4 relative shrink-0">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-ninja-accent opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-4 w-4 bg-ninja-accent"></span>
                 </span>
-                <span className="text-ninja-accent font-black tracking-[0.2em] text-sm uppercase drop-shadow-[0_0_10px_rgba(255,120,50,0.8)]">Global Launch</span>
-                <div className="w-0.5 h-8 bg-ninja-accent/50"></div>
-                <span className="text-white font-black tracking-tighter text-3xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
-                  FEB <span className="text-ninja-accent">21</span>
+                <span className="text-ninja-accent font-black tracking-[0.1em] text-[10px] sm:text-[11px] uppercase leading-tight drop-shadow-[0_0_10px_rgba(255,120,50,0.8)]">
+                  <span className="block sm:whitespace-nowrap">Release Countdown • Feb 21 • 9:00 PM</span>
+                </span>
+                <div className="hidden sm:block w-0.5 h-8 mx-1 bg-ninja-accent/50"></div>
+                <span className="text-white font-black font-mono tabular-nums tracking-[0.06em] text-lg sm:text-xl md:text-2xl whitespace-nowrap min-w-[16ch] text-left sm:text-right drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+                  {countdownLabel}
                 </span>
               </div>
 
@@ -91,6 +111,17 @@ export default function Home() {
                 <Trophy className="w-5 h-5 text-ninja-dim" />
                 VIEW RANKS
               </Link>
+
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                title="Download unlocks on release"
+                className="h-14 px-8 bg-zinc-900/70 border border-zinc-700/80 text-zinc-400 text-lg font-bold rounded-lg flex items-center gap-3 opacity-85 cursor-not-allowed select-none"
+              >
+                <UploadCloud className="w-5 h-5" />
+                DOWNLOAD (LOCKED)
+              </button>
             </div>
 
             <div className="flex items-center gap-4 text-xs font-medium text-ninja-dim pt-4">
@@ -185,4 +216,25 @@ export default function Home() {
       </footer>
     </div>
   );
+}
+
+function getTimeLeft(target: Date) {
+  const now = new Date();
+  const diffMs = target.getTime() - now.getTime();
+
+  if (diffMs <= 0) {
+    return { days: 0, hours: 0, minutes: 0, seconds: 0, expired: true };
+  }
+
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return { days, hours, minutes, seconds, expired: false };
+}
+
+function pad(value: number) {
+  return String(value).padStart(2, "0");
 }
