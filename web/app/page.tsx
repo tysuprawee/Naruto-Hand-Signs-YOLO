@@ -21,11 +21,11 @@ export default function Home() {
             <div className="h-10 w-10 relative">
               <img src="/logo2.png" alt="Shinobi Academy" className="object-contain w-full h-full" />
             </div>
-            <span className="font-bold tracking-tight text-lg text-white">SHINOBI ACADEMY</span>
+            <span className="font-bold tracking-tight text-lg text-zinc-100 drop-shadow-[0_1px_8px_rgba(0,0,0,0.85)]">SHINOBI ACADEMY</span>
           </div>
-          <nav className="hidden md:flex gap-8 text-sm font-medium text-ninja-dim">
-            <Link href="#features" className="hover:text-ninja-accent transition-colors">Features</Link>
-            <Link href="#dev" className="hover:text-ninja-accent transition-colors">Dev</Link>
+          <nav className="hidden md:flex gap-8 text-sm font-medium text-zinc-200/90">
+            <Link href="#features" className="hover:text-ninja-accent transition-colors drop-shadow-[0_1px_6px_rgba(0,0,0,0.7)]">Features</Link>
+            <Link href="#dev" className="hover:text-ninja-accent transition-colors drop-shadow-[0_1px_6px_rgba(0,0,0,0.7)]">Dev</Link>
             <Link href="/leaderboard" className="flex items-center gap-2 text-ninja-accent font-bold hover:text-ninja-accent-glow transition-colors">
               <Trophy className="w-4 h-4" />
               Leaderboard
@@ -42,31 +42,33 @@ export default function Home() {
             {/* Badges Container */}
             <div className="flex flex-col items-start gap-4">
               {/* Global Launch Date Pill */}
-              <div className="inline-flex items-center gap-3 px-5 py-2 rounded-full border border-ninja-accent/50 bg-ninja-accent/10 backdrop-blur-md shadow-[0_0_20px_rgba(255,120,50,0.2)]">
-                <span className="flex h-3 w-3 relative">
+              <div className="inline-flex items-center gap-4 px-8 py-4 rounded-full border-2 border-ninja-accent/80 bg-ninja-accent/10 backdrop-blur-xl shadow-[0_0_40px_rgba(255,120,50,0.4)] hover:shadow-[0_0_60px_rgba(255,120,50,0.6)] transition-shadow duration-500">
+                <span className="flex h-4 w-4 relative">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-ninja-accent opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-ninja-accent"></span>
+                  <span className="relative inline-flex rounded-full h-4 w-4 bg-ninja-accent"></span>
                 </span>
-                <span className="text-ninja-accent font-bold tracking-widest text-xs uppercase">Global Launch</span>
-                <div className="w-px h-4 bg-ninja-accent/30"></div>
-                <span className="text-white font-black tracking-tighter text-lg">FEB 21</span>
+                <span className="text-ninja-accent font-black tracking-[0.2em] text-sm uppercase drop-shadow-[0_0_10px_rgba(255,120,50,0.8)]">Global Launch</span>
+                <div className="w-0.5 h-8 bg-ninja-accent/50"></div>
+                <span className="text-white font-black tracking-tighter text-3xl drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+                  FEB <span className="text-ninja-accent">21</span>
+                </span>
               </div>
 
               {/* System Status */}
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-ninja-border bg-ninja-card text-[10px] font-bold font-mono text-ninja-dim uppercase tracking-wider">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-ninja-border bg-ninja-card/95 text-[10px] font-bold font-mono text-zinc-200/85 uppercase tracking-wider">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                 v1.0 SYSTEM ONLINE • UNOFFICIAL FANGAME
               </div>
             </div>
 
-            <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-[1.1] text-white">
+            <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-[1.1] text-transparent bg-clip-text bg-gradient-to-b from-white via-zinc-100 to-zinc-300 drop-shadow-[0_2px_18px_rgba(0,0,0,0.95)]">
               MASTER YOUR <br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-ninja-accent to-red-500">
+              <span className="inline-block text-orange-300">
                 JUTSUS.
               </span>
             </h1>
 
-            <p className="text-xl text-ninja-dim max-w-lg leading-relaxed">
+            <p className="text-xl text-zinc-200/90 max-w-lg leading-relaxed drop-shadow-[0_1px_6px_rgba(0,0,0,0.75)]">
               Train real hand signs using AI computer vision. Level up, unlock jutsus, and climb the ranks from Student to Hokage.
             </p>
 
