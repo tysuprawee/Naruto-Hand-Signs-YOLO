@@ -6,13 +6,13 @@
       "best_time": 2.270822048187256
     },
     "Rasengan": {
-      "best_time": 5.793571472167969e-05
+      "best_time": 1.3113021850585938e-05
     },
     "Fireball": {
       "best_time": 32.23553800582886
     },
     "Chidori": {
-      "best_time": 6.03719687461853
+      "best_time": 1.6928458213806152
     },
     "Water Dragon": {
       "best_time": 43.59477472305298
@@ -24,7 +24,10 @@
       "best_time": 51.18164610862732
     },
     "Shadow Clone + Chidori Combo": {
-      "best_time": 5.0782599449157715
+      "best_time": 4.960210800170898
+    },
+    "Shadow Clone + Rasengan Combo": {
+      "best_time": 2.303658962249756
     }
   },
   "quests": {
@@ -49,7 +52,7 @@
       "period": "2026-W06",
       "quests": {
         "w_jutsus": {
-          "progress": 16,
+          "progress": 75,
           "claimed": false
         },
         "w_challenges": {
@@ -57,7 +60,7 @@
           "claimed": false
         },
         "w_xp": {
-          "progress": 1510,
+          "progress": 6100,
           "claimed": false
         }
       }

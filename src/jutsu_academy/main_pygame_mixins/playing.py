@@ -330,12 +330,15 @@ class PlayingMixin:
                                         self.combo_clone_hold = True
                                     if part_effect == "lightning" and str(part_name).lower() == "chidori":
                                         self.combo_chidori_triple = True
+                                    if part_effect == "rasengan" and str(part_name).lower() == "rasengan":
+                                        self.combo_rasengan_triple = True
                                     self.play_sound("complete")
                                     self._trigger_jutsu_payload(part_name, part_effect)
 
                         if self.current_step >= len(self.sequence):
                             self.jutsu_active = True
                             self.jutsu_start_time = time.time()
+                            self.jutsu_duration = float(jutsu_data.get("duration", 5.0))
                             self.current_step = 0
                             clear_time = None
                             if self.game_mode == "challenge":
@@ -427,6 +430,7 @@ class PlayingMixin:
                         clone_effect.on_jutsu_end(EffectContext())
                     self.combo_clone_hold = False
                 self.combo_chidori_triple = False
+                self.combo_rasengan_triple = False
                 self.current_video = None
                 if self.video_cap:
                     self.video_cap.release()
@@ -549,54 +553,71 @@ class PlayingMixin:
         if self.current_video and self.video_cap and self.video_cap.isOpened():
             ret, vid_frame = self.video_cap.read()
             if ret:
+                current_video_name = str(self.current_video).lower()
+                if current_video_name == "chidori":
+                    base_size = 620
+                elif current_video_name == "rasengan":
+                    base_size = 520
+                else:
+                    base_size = 560
+
                 # Track Hand
                 if hasattr(self, 'hand_pos') and self.hand_pos:
                     hx, hy = self.hand_pos
-                    size = 650 # Significantly bigger Chidori
+                    dynamic_scale = float(getattr(self, "hand_effect_scale", 1.0) or 1.0)
+                    size = int(base_size * dynamic_scale)
+                    should_draw_effect = True
                 else:
-                    hx, hy = 320, 240
-                    size = 500 # Center if no hand
-                
-                # Calculate aspect ratio to avoid stretching
-                v_h, v_w = vid_frame.shape[:2]
-                aspect = v_w / v_h
-                
-                if aspect > 1: # Landscape
-                    dw, dh = size, int(size / aspect)
-                else: # Portrait/Square
-                    dw, dh = int(size * aspect), size
-                
-                # Resize video (Maintaining aspect ratio)
-                vid_frame = cv2.resize(vid_frame, (dw, dh))
-                
-                # Apply Radial Feathering (Removes hard square edges from video frame)
-                # Create coordinate grids
-                Y, X = np.ogrid[:dh, :dw]
-                center_x, center_y = dw // 2, dh // 2
-                # Normalized elliptical distance (0.0 at center, 1.0 at edges)
-                dist = np.sqrt(((X - center_x) / (dw / 2))**2 + ((Y - center_y) / (dh / 2))**2)
-                # Soft fade starting at 65% of the radius
-                mask = np.clip(1.0 - (dist - 0.65) / 0.35, 0, 1)
-                mask = (mask ** 1.5).astype(np.float32) # Smooth falloff
-                # Apply mask to RGB values
-                vid_frame = (vid_frame.astype(np.float32) * mask[:, :, np.newaxis]).astype(np.uint8)
-                
-                vid_frame = cv2.cvtColor(vid_frame, cv2.COLOR_BGR2RGB)
-                vid_frame = np.rot90(vid_frame)
-                vid_frame = np.flipud(vid_frame)
-                vid_surface = pygame.surfarray.make_surface(vid_frame)
+                    # No hand: hide effect until tracking returns.
+                    should_draw_effect = False
 
-                # Blit centered on hand with additive blending.
-                if getattr(self, "combo_chidori_triple", False) and str(self.current_video).lower() == "chidori":
-                    offsets = [(-int(dw * 0.35), -int(dh * 0.08)), (0, 0), (int(dw * 0.35), -int(dh * 0.08))]
-                else:
-                    offsets = [(0, 0)]
-                for ox, oy in offsets:
-                    self.screen.blit(
-                        vid_surface,
-                        (cam_x + hx - dw // 2 + ox, cam_y + hy - dh // 2 + oy),
-                        special_flags=pygame.BLEND_RGB_ADD,
-                    )
+                if should_draw_effect:
+                    size = max(320, min(920, size))
+                
+                    # Calculate aspect ratio to avoid stretching
+                    v_h, v_w = vid_frame.shape[:2]
+                    aspect = v_w / v_h
+                    
+                    if aspect > 1: # Landscape
+                        dw, dh = size, int(size / aspect)
+                    else: # Portrait/Square
+                        dw, dh = int(size * aspect), size
+                    
+                    # Resize video (Maintaining aspect ratio)
+                    vid_frame = cv2.resize(vid_frame, (dw, dh))
+                    
+                    # Apply Radial Feathering (Removes hard square edges from video frame)
+                    # Create coordinate grids
+                    Y, X = np.ogrid[:dh, :dw]
+                    center_x, center_y = dw // 2, dh // 2
+                    # Normalized elliptical distance (0.0 at center, 1.0 at edges)
+                    dist = np.sqrt(((X - center_x) / (dw / 2))**2 + ((Y - center_y) / (dh / 2))**2)
+                    # Soft fade starting at 65% of the radius
+                    mask = np.clip(1.0 - (dist - 0.65) / 0.35, 0, 1)
+                    mask = (mask ** 1.5).astype(np.float32) # Smooth falloff
+                    # Apply mask to RGB values
+                    vid_frame = (vid_frame.astype(np.float32) * mask[:, :, np.newaxis]).astype(np.uint8)
+                    
+                    vid_frame = cv2.cvtColor(vid_frame, cv2.COLOR_BGR2RGB)
+                    vid_frame = np.rot90(vid_frame)
+                    vid_frame = np.flipud(vid_frame)
+                    vid_surface = pygame.surfarray.make_surface(vid_frame)
+
+                    # Blit centered on hand with additive blending.
+                    if (
+                        (getattr(self, "combo_chidori_triple", False) and current_video_name == "chidori")
+                        or
+                        (getattr(self, "combo_rasengan_triple", False) and current_video_name == "rasengan")
+                    ):
+                        offsets = [(-int(dw * 0.35), -int(dh * 0.08)), (0, 0), (int(dw * 0.35), -int(dh * 0.08))]
+                    else:
+                        offsets = [(0, 0)]
+                    for ox, oy in offsets:
+                        self.screen.blit(
+                            vid_surface,
+                            (cam_x + hx - dw // 2 + ox, cam_y + hy - dh // 2 + oy),
+                            special_flags=pygame.BLEND_RGB_ADD,
+                        )
             else:
                 # Video ended, loop it
                 self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)

@@ -367,6 +367,7 @@ class CoreMixin:
         self.clone_spawn_delay_s = 1.5
         self.combo_clone_hold = False
         self.combo_chidori_triple = False
+        self.combo_rasengan_triple = False
         
         # Challenge Mode State
         self.challenge_state = "waiting" # waiting, countdown, active, results
@@ -385,6 +386,9 @@ class CoreMixin:
         self.mouth_pos = None
         self.hand_pos = None
         self.smooth_hand_pos = None
+        self.hand_effect_scale = 1.0
+        self.smooth_hand_effect_scale = None
+        self.tracked_hand_label = None
         self.hand_lost_frames = 0
         self.max_hold_frames = 15 # frames to keep the effect where it was
         self.head_yaw = 0

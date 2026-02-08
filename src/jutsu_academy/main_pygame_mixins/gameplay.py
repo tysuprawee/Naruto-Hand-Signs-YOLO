@@ -50,6 +50,7 @@ class GameplayMixin:
         self.combo_triggered_steps = set()
         self.combo_clone_hold = False
         self.combo_chidori_triple = False
+        self.combo_rasengan_triple = False
         self.jutsu_active = False
         self.fire_particles.emitting = False
         self.pending_sounds = []
@@ -107,6 +108,7 @@ class GameplayMixin:
         self.sequence_run_start = None
         self.combo_clone_hold = False
         self.combo_chidori_triple = False
+        self.combo_rasengan_triple = False
         self.pending_sounds = []
         self.pending_effects = []
         self.effect_orchestrator.on_jutsu_end(EffectContext())
@@ -139,6 +141,7 @@ class GameplayMixin:
         self.combo_triggered_steps = set()
         self.combo_clone_hold = False
         self.combo_chidori_triple = False
+        self.combo_rasengan_triple = False
         self.jutsu_active = False
         self.fire_particles.emitting = False
         self.pending_sounds = []
@@ -191,44 +194,106 @@ class GameplayMixin:
             if result.hand_landmarks:
                 self.hand_lost_frames = 0
                 h, w = frame.shape[:2]
-                
-                # 1. Primary Hand logic for effects (using the first hand)
-                primary_landmarks = result.hand_landmarks[0]
-                
-                # Base Position (Centroid of Wrist + All Knuckles)
+
+                # Build candidates for each detected hand, then choose one consistently.
+                candidates = []
                 indices = [0, 5, 9, 13, 17]
-                base_x = sum(primary_landmarks[i].x for i in indices) / len(indices)
-                base_y = sum(primary_landmarks[i].y for i in indices) / len(indices)
 
-                # Palm Normal for offsetting effect
-                def to_vec(landmarks, idx):
-                    lm = landmarks[idx]
-                    return np.array([lm.x, lm.y, lm.z])
-                
-                v1 = to_vec(primary_landmarks, 5) - to_vec(primary_landmarks, 0)
-                v2 = to_vec(primary_landmarks, 17) - to_vec(primary_landmarks, 0)
-                normal = np.cross(v1, v2)
-                mag = np.linalg.norm(normal)
-                if mag > 1e-6: normal /= mag
-                
-                offset_strength = 0.25
-                if result.handedness:
-                    label = result.handedness[0][0].category_name
-                    if label == "Left": offset_strength = -0.25
+                for hand_idx, landmarks in enumerate(result.hand_landmarks):
+                    base_x = sum(landmarks[i].x for i in indices) / len(indices)
+                    base_y = sum(landmarks[i].y for i in indices) / len(indices)
 
-                target_x = (base_x + normal[0] * offset_strength) * w
-                target_y = (base_y + normal[1] * offset_strength) * h
-                
-                # Temporal Smoothing
-                if self.smooth_hand_pos is None:
-                    self.smooth_hand_pos = (target_x, target_y)
+                    def to_vec(hand_landmarks, idx):
+                        lm = hand_landmarks[idx]
+                        return np.array([lm.x, lm.y, lm.z])
+
+                    v1 = to_vec(landmarks, 5) - to_vec(landmarks, 0)
+                    v2 = to_vec(landmarks, 17) - to_vec(landmarks, 0)
+                    normal = np.cross(v1, v2)
+                    mag = np.linalg.norm(normal)
+                    if mag > 1e-6:
+                        normal /= mag
+
+                    offset_strength = 0.25
+                    hand_label = "Unknown"
+                    if result.handedness and hand_idx < len(result.handedness):
+                        hand_label = result.handedness[hand_idx][0].category_name
+                        if hand_label == "Left":
+                            offset_strength = -0.25
+
+                    target_x = (base_x + normal[0] * offset_strength) * w
+                    target_y = (base_y + normal[1] * offset_strength) * h
+
+                    palm_span = float(np.linalg.norm(
+                        np.array([landmarks[5].x, landmarks[5].y]) -
+                        np.array([landmarks[17].x, landmarks[17].y])
+                    ))
+                    reference_span = 0.18
+                    target_scale = palm_span / reference_span
+                    target_scale = max(0.65, min(1.9, target_scale))
+
+                    candidates.append({
+                        "x": target_x,
+                        "y": target_y,
+                        "scale": target_scale,
+                        "label": hand_label,
+                    })
+
+                if candidates:
+                    chosen = None
+
+                    # Prefer the currently tracked hand side to avoid left/right teleporting.
+                    if self.tracked_hand_label:
+                        same_label = [c for c in candidates if c["label"] == self.tracked_hand_label]
+                        if same_label:
+                            if self.hand_pos is not None:
+                                prev_x, prev_y = self.hand_pos
+                                chosen = min(
+                                    same_label,
+                                    key=lambda c: (c["x"] - prev_x) ** 2 + (c["y"] - prev_y) ** 2
+                                )
+                            else:
+                                chosen = same_label[0]
+
+                    # Bootstrap: default to Right hand first, then Left, then nearest.
+                    if chosen is None and self.hand_pos is None:
+                        right = [c for c in candidates if c["label"] == "Right"]
+                        left = [c for c in candidates if c["label"] == "Left"]
+                        chosen = right[0] if right else (left[0] if left else candidates[0])
+
+                    if chosen is None and self.hand_pos is not None:
+                        prev_x, prev_y = self.hand_pos
+                        chosen = min(
+                            candidates,
+                            key=lambda c: (c["x"] - prev_x) ** 2 + (c["y"] - prev_y) ** 2
+                        )
+                    if chosen is None:
+                        chosen = candidates[0]
+
+                    target_x = chosen["x"]
+                    target_y = chosen["y"]
+                    target_scale = chosen["scale"]
+                    self.tracked_hand_label = chosen["label"] if chosen["label"] != "Unknown" else self.tracked_hand_label
+
+                    # Jitter filter (no smoothing/lag): ignore micro-movements only.
+                    if self.hand_pos is not None:
+                        prev_x, prev_y = self.hand_pos
+                        jitter_px = 9.0
+                        if (target_x - prev_x) ** 2 + (target_y - prev_y) ** 2 < (jitter_px ** 2):
+                            target_x, target_y = prev_x, prev_y
+
+                    # Follow selected hand directly for meaningful movement.
+                    self.hand_pos = (target_x, target_y)
+                    self.smooth_hand_pos = self.hand_pos
+                if self.smooth_hand_effect_scale is None:
+                    self.smooth_hand_effect_scale = target_scale
                 else:
-                    alpha = 0.08 
-                    curr_x, curr_y = self.smooth_hand_pos
-                    self.smooth_hand_pos = (curr_x + (target_x - curr_x) * alpha, 
-                                            curr_y + (target_y - curr_y) * alpha)
-                
-                self.hand_pos = self.smooth_hand_pos
+                    alpha_scale = 0.10
+                    self.smooth_hand_effect_scale = (
+                        self.smooth_hand_effect_scale +
+                        (target_scale - self.smooth_hand_effect_scale) * alpha_scale
+                    )
+                self.hand_effect_scale = self.smooth_hand_effect_scale
                 self.last_mp_result = result
                 
                 # 2. Draw Skeletons for ALL detected hands
@@ -256,14 +321,10 @@ class GameplayMixin:
                                             (int(p2.x * w), int(p2.y * h)), color, 2)
             else:
                 self.hand_lost_frames += 1
-                # Increase hold time to 30 frames (~1 sec at 30fps)
-                if self.hand_lost_frames < 30:
-                    # Keep previous smooth position as current output
-                    self.hand_pos = self.smooth_hand_pos
-                else:
-                    # Truly lost, allow fallback to center
-                    self.hand_pos = None
-                    self.smooth_hand_pos = None
+                self.hand_pos = None
+                self.smooth_hand_pos = None
+                self.smooth_hand_effect_scale = None
+                self.hand_effect_scale = 1.0
         except Exception as e:
             print(f"[!] detect_hands error: {e}")
 

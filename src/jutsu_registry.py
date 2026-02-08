@@ -10,6 +10,7 @@ OFFICIAL_JUTSUS = {
         "sound_path": None,
         "video_path": None,
         "effect": "lightning",
+        "duration": 6.0,
         "min_level": 5,
         "combo_parts": [
             {
@@ -21,6 +22,27 @@ OFFICIAL_JUTSUS = {
                 "name": "Chidori",
                 "at_step": 6,
                 "effect": "lightning"
+            }
+        ]
+    },
+    "Shadow Clone + Rasengan Combo": {
+        "sequence": ["ram", "snake", "tiger", "ram"],
+        "display_text": "COMBO: SHADOW CLONE + RASENGAN!",
+        "sound_path": None,
+        "video_path": None,
+        "effect": "rasengan",
+        "duration": 8.0,
+        "min_level": 5,
+        "combo_parts": [
+            {
+                "name": "Shadow Clone",
+                "at_step": 3,
+                "effect": "clone"
+            },
+            {
+                "name": "Rasengan",
+                "at_step": 4,
+                "effect": "rasengan"
             }
         ]
     },
@@ -38,6 +60,7 @@ OFFICIAL_JUTSUS = {
         "sound_path": "src/sounds/rasengan.mp3",
         "video_path": "src/RasenShuriken/RasenShuriken.mp4",
         "effect": "rasengan",
+        "duration": 8.0,
         "min_level": 1
     },
     "Fireball": {
@@ -54,6 +77,7 @@ OFFICIAL_JUTSUS = {
         "sound_path": "src/chidori/chidori.mp3",
         "video_path": "src/chidori/chidori.mp4",
         "effect": "lightning",
+        "duration": 6.0,
         "min_level": 5
     },
     "Water Dragon": {

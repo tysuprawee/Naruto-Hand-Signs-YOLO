@@ -3,26 +3,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ArrowLeft, Camera, RefreshCw, AlertTriangle, Bug, X, UploadCloud, CheckCircle } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import { KNNClassifier, normalizeHand } from "@/utils/knn"; // Import our new utils
 
 export default function PlayPage() {
-    const router = useRouter();
-
-    useEffect(() => {
-        router.push("/");
-    }, [router]);
-
-    // Return null or a loading state to prevent the rest of the component from flashing
-    return (
-        <div className="min-h-screen bg-black flex items-center justify-center">
-            <h1 className="text-white text-2xl font-bold animate-pulse">Redirecting to Home...</h1>
-        </div>
-    );
-
-    // Code helper to stop execution here
-    // Original code below is unreachable but kept for restoration later 
     const [classifier, setClassifier] = useState<KNNClassifier | null>(null);
     const [landmarker, setLandmarker] = useState<HandLandmarker | null>(null);
     const [loading, setLoading] = useState(true);
