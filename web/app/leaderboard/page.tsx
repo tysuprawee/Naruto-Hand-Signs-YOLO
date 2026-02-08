@@ -26,6 +26,13 @@ export default function LeaderboardPage() {
         async function fetchLeaderboard() {
             setLoading(true);
 
+            if (!supabase) {
+                console.error("Supabase env vars are missing. Leaderboard is unavailable.");
+                setEntries([]);
+                setLoading(false);
+                return;
+            }
+
             // Convert display mode to database format (UPPERCASE)
             // e.g. "Water Dragon" -> "WATER DRAGON" (assuming DB uses spaces)
             // If DB uses underscores for some (like SHADOW_CLONE), we might need a map.
