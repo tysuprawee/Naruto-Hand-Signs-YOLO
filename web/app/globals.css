@@ -53,6 +53,33 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Force pointer cursor for interactive elements (and their children). */
+a[href],
+a[href] *,
+button:not(:disabled),
+button:not(:disabled) *,
+[role="button"]:not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]) *,
+input[type="button"]:not(:disabled),
+input[type="submit"]:not(:disabled),
+input[type="reset"]:not(:disabled),
+summary,
+summary *,
+label[for],
+label[for] *,
+[onclick],
+[onclick] *,
+[tabindex]:not([tabindex="-1"]),
+[tabindex]:not([tabindex="-1"]) * {
+  cursor: pointer !important;
+}
+
+/* Runtime guard: keep pointer while hovering interactive regions. */
+html[data-force-pointer="true"],
+html[data-force-pointer="true"] * {
+  cursor: pointer !important;
+}
+
 /* Custom 3D Animations */
 .perspective-container {
   perspective: 1200px;

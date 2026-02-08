@@ -39,15 +39,30 @@ export default function Home() {
         {/* Hero Section */}
         <section className="mb-32 flex flex-col md:flex-row items-center gap-16">
           <div className="flex-1 space-y-8">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-ninja-border bg-ninja-card text-xs font-bold font-mono text-ninja-accent uppercase tracking-wider">
-              <span className="w-2 h-2 rounded-full bg-ninja-accent animate-pulse shadow-[0_0_8px_var(--color-ninja-accent)]"></span>
-              v1.0 SYSTEM ONLINE
+            {/* Badges Container */}
+            <div className="flex flex-col items-start gap-4">
+              {/* Global Launch Date Pill */}
+              <div className="inline-flex items-center gap-3 px-5 py-2 rounded-full border border-ninja-accent/50 bg-ninja-accent/10 backdrop-blur-md shadow-[0_0_20px_rgba(255,120,50,0.2)]">
+                <span className="flex h-3 w-3 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-ninja-accent opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-ninja-accent"></span>
+                </span>
+                <span className="text-ninja-accent font-bold tracking-widest text-xs uppercase">Global Launch</span>
+                <div className="w-px h-4 bg-ninja-accent/30"></div>
+                <span className="text-white font-black tracking-tighter text-lg">FEB 21</span>
+              </div>
+
+              {/* System Status */}
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-ninja-border bg-ninja-card text-[10px] font-bold font-mono text-ninja-dim uppercase tracking-wider">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                v1.0 SYSTEM ONLINE • UNOFFICIAL FANGAME
+              </div>
             </div>
 
             <h1 className="text-5xl md:text-7xl font-black tracking-tight leading-[1.1] text-white">
               MASTER YOUR <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-ninja-accent to-red-500">
-                INNER CHAKRA.
+                JUTSUS.
               </span>
             </h1>
 
@@ -56,13 +71,16 @@ export default function Home() {
             </p>
 
             <div className="flex flex-wrap items-center gap-4 pt-4">
-              <Link
+
+              {/* Play Button Removed for now */}
+              {/* <Link
                 href="/play"
                 className="group h-14 px-8 bg-ninja-accent hover:bg-ninja-accent-glow text-white text-lg font-bold rounded-lg flex items-center gap-3 transition-all shadow-[0_0_20px_rgba(255,120,50,0.3)] hover:shadow-[0_0_30px_rgba(255,120,50,0.5)] hover:-translate-y-1"
               >
                 PLAY NOW
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
+              </Link> */}
+
 
               <Link
                 href="/leaderboard"
@@ -76,10 +94,6 @@ export default function Home() {
             <div className="flex items-center gap-4 text-xs font-medium text-ninja-dim pt-4">
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-ninja-success" /> Privacy First (Local AI)
-              </div>
-              <div className="w-1 h-1 bg-ninja-border rounded-full"></div>
-              <div className="flex items-center gap-2">
-                <Video className="w-4 h-4 text-blue-400" /> GPU Recommended
               </div>
             </div>
           </div>
@@ -97,12 +111,7 @@ export default function Home() {
               />
             </div>
 
-            <div className="mt-8 text-center animate-pulse z-10 bg-black/50 backdrop-blur-sm px-8 py-4 rounded-xl border border-ninja-accent/30 shadow-[0_0_30px_rgba(255,120,50,0.2)]">
-              <span className="block text-ninja-accent font-black tracking-[0.5em] text-sm mb-2 uppercase">Global Launch</span>
-              <span className="text-4xl md:text-6xl font-black text-white tracking-tighter drop-shadow-[0_0_15px_rgba(255,120,50,0.8)]">
-                FEBRUARY <span className="text-ninja-accent">21</span>
-              </span>
-            </div>
+
           </div>
         </section>
 
@@ -128,7 +137,7 @@ export default function Home() {
 
           <div className="flex flex-col md:flex-row gap-12 items-center relative z-10">
             <div className="w-32 h-32 md:w-48 md:h-48 rounded-full border-4 border-ninja-bg overflow-hidden shadow-2xl shrink-0">
-              <img src="/dev.jpg" alt="Dev" className="w-full h-full object-cover" />
+              <img src="/me1.png" alt="Dev" className="w-full h-full object-cover" />
             </div>
 
             <div className="space-y-6 text-center md:text-left">
